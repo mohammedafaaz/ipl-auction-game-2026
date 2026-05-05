@@ -1,9 +1,24 @@
 // Web Audio API sound effects — no external files needed
 
 let ctx = null;
+let userInteracted = false;
+
+// Call this on first user gesture (click/tap)
+export function initAudio() {
+  userInteracted = true;
+  if (!ctx) {
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch {}
+  }
+  if (ctx?.state === 'suspended') ctx.resume();
+}
 
 function getCtx() {
-  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!userInteracted) return null;
+  if (!ctx) {
+    try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; }
+  }
   if (ctx.state === 'suspended') ctx.resume();
   return ctx;
 }
@@ -12,6 +27,7 @@ function getCtx() {
 
 function playTone(freq, type, duration, volume = 0.3, startTime = 0) {
   const c = getCtx();
+  if (!c) return;
   const t = c.currentTime + startTime;
   const osc = c.createOscillator();
   const gain = c.createGain();
@@ -27,6 +43,7 @@ function playTone(freq, type, duration, volume = 0.3, startTime = 0) {
 
 function playNoise(duration, volume = 0.15, startTime = 0) {
   const c = getCtx();
+  if (!c) return;
   const t = c.currentTime + startTime;
   const bufSize = c.sampleRate * duration;
   const buf = c.createBuffer(1, bufSize, c.sampleRate);

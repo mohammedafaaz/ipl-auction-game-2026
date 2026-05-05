@@ -129,9 +129,11 @@ export default function Auction() {
     resetForPlayer(remaining[0]);
 
     // In multiplayer, write next player + reset auction state to Firebase
+    // Only write auctionedIds (not full playerPool) to avoid stack overflow
     if (!isSolo && database) {
+      const auctionedIds = pool.filter(p => p.auctioned).map(p => p.id);
       update(ref(database, `rooms/${code}`), {
-        playerPool: pool,
+        auctionedIds,
         teamStates: states,
         auction: {
           currentPlayerId: remaining[0].id,
@@ -205,7 +207,12 @@ export default function Auction() {
       const data = snap.val();
       const tid = data.players?.[playerId]?.teamId;
       setMyTeamId(tid);
-      const pool = data.playerPool || [];
+      // Reconstruct playerPool from base pool + auctionedIds (avoids writing 280 objects to Firebase)
+      const auctionedIds = new Set(data.auctionedIds || []);
+      const basePool = data.playerPool || [];
+      const pool = basePool.length > 0
+        ? basePool.map(p => ({ ...p, auctioned: auctionedIds.has(p.id) }))
+        : [];
       const states = data.teamStates || {};
       setPlayerPool(pool);
       setTeamStates(states);
@@ -403,7 +410,7 @@ export default function Auction() {
         clearTimeout(aiTimerRef.current);
         const updatedPool = playerPool.map(p => p.id === currentPlayer.id ? { ...p, auctioned: true } : p);
         await update(ref(database, `rooms/${code}`), {
-          playerPool: updatedPool,
+          auctionedIds: updatedPool.filter(p => p.auctioned).map(p => p.id),
           auction: {
             currentBid: 0,
             leadingTeam: null,
@@ -463,7 +470,7 @@ export default function Auction() {
         const updatedPool = playerPool.map(p => p.id === currentPlayer?.id ? { ...p, auctioned: true } : p);
         setPlayerPool(updatedPool);
         if (isSolo) sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
-        else if (database) update(ref(database, `rooms/${code}`), { playerPool: updatedPool });
+        else if (database) update(ref(database, `rooms/${code}`), { auctionedIds: updatedPool.filter(p => p.auctioned).map(p => p.id) });
         advanceToNext(teamStates, updatedPool);
       }, 2000);
     } else {
@@ -487,7 +494,7 @@ export default function Auction() {
         sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
       } else if (database) {
         update(ref(database, `rooms/${code}/auction`), { phase: 'sold', soldInfo: { teamId: winner, price }, currentBid: price, leadingTeam: winner });
-        update(ref(database, `rooms/${code}`), { teamStates: newStates, playerPool: updatedPool });
+        update(ref(database, `rooms/${code}`), { teamStates: newStates, auctionedIds: updatedPool.filter(p => p.auctioned).map(p => p.id) });
       }
 
       recordRecent(currentPlayer, 'sold', winner, price, capturedHistory);

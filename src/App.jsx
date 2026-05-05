@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider } from './AppContext.jsx';
 import ToastContainer from './components/ToastContainer.jsx';
+import { initAudio } from './utils/sounds.js';
 import Home from './pages/Home.jsx';
 import CreateRoom from './pages/CreateRoom.jsx';
 import JoinRoom from './pages/JoinRoom.jsx';
@@ -17,6 +18,16 @@ import HandCricket from './pages/HandCricket.jsx';
 import './styles/globals.css';
 
 export default function App() {
+  useEffect(() => {
+    const handler = () => initAudio();
+    window.addEventListener('click', handler, { once: true });
+    window.addEventListener('touchstart', handler, { once: true });
+    return () => {
+      window.removeEventListener('click', handler);
+      window.removeEventListener('touchstart', handler);
+    };
+  }, []);
+
   return (
     <AppProvider>
       <BrowserRouter>
