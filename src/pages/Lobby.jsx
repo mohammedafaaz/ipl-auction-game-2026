@@ -35,6 +35,8 @@ export default function Lobby() {
       const data = snap.val();
       setRoom(data);
       setLoading(false);
+      // Store players for tournament team selection
+      sessionStorage.setItem('roomPlayers', JSON.stringify(data.players || {}));
       if (data.status === 'retention') navigate(`/retention/${code}`);
       if (data.status === 'auction') navigate(`/auction/${code}`);
     });

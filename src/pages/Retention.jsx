@@ -61,7 +61,20 @@ export default function Retention() {
       if (myPlayer?.isHost && data.retentionDone) {
         const allDone = players.every(p => data.retentionDone[p.id]);
         if (allDone) {
-          update(ref(database, `rooms/${code}`), { status: 'auction' });
+          // Find first player in pool
+          const pool = data.playerPool || [];
+          const available = pool.filter(p => !p.auctioned);
+          const firstPlayer = available.sort((a, b) => (a.poolOrder || 0) - (b.poolOrder || 0))[0];
+          update(ref(database, `rooms/${code}`), {
+            status: 'auction',
+            'auction/currentPlayerId': firstPlayer?.id || null,
+            'auction/currentBid': firstPlayer?.basePrice || 0,
+            'auction/leadingTeam': null,
+            'auction/bidHistory': [],
+            'auction/timerExpiry': Date.now() + 30000,
+            'auction/phase': 'bidding',
+            'auction/soldInfo': null,
+          });
         }
       }
     });

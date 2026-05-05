@@ -24,11 +24,15 @@ export default function FinalSquads() {
 
   const handleStartTournament = async () => {
     setStartingTournament(true);
-    const teamIds = TEAMS.map(t => t.id);
+    // Only use teams that actually participated (joined the room or solo)
+    const participatingTeamIds = isSolo
+      ? TEAMS.map(t => t.id) // solo uses all 10
+      : Object.values(JSON.parse(sessionStorage.getItem('roomPlayers') || '{}')).map(p => p.teamId).filter(Boolean);
+
+    const teamIds = participatingTeamIds.length >= 2 ? participatingTeamIds : TEAMS.map(t => t.id);
     const schedule = generateSchedule(teamIds);
     const pointsTable = buildPointsTable(teamIds);
     const tournamentId = `tournament_${Date.now()}`;
-    // Solo: use soloTeamId. Multiplayer: use the selected team (already set in state)
     const resolvedMyTeamId = isSolo ? soloTeamId : selectedTeam;
 
     const tournamentData = {

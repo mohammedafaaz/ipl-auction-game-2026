@@ -25,7 +25,7 @@ export function getTeamStrength(squad) {
   return { batting, bowling, overall: (batting + bowling) / 2 };
 }
 
-// ── Generate round-robin schedule (each pair plays once) ─────────────────────
+// ── Generate round-robin schedule for only the participating teams ──────────
 export function generateSchedule(teamIds) {
   const matches = [];
   let id = 1;
@@ -35,12 +35,12 @@ export function generateSchedule(teamIds) {
         id: id++,
         team1: teamIds[i],
         team2: teamIds[j],
-        status: 'pending', // pending | completed
-        result: null,      // { winner, score1, score2, overs1, overs2, wickets1, wickets2 }
+        status: 'pending',
+        result: null,
+        live: false, // true when match is currently being played
       });
     }
   }
-  // Shuffle
   for (let i = matches.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [matches[i], matches[j]] = [matches[j], matches[i]];
