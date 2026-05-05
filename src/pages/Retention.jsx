@@ -45,7 +45,13 @@ export default function Retention() {
       setPlayerPool(data.playerPool || []);
       const myTeamId = data.players?.[playerId]?.teamId;
       if (myTeamId && data.teamStates?.[myTeamId]) {
-        setTeamState(data.teamStates[myTeamId]);
+        const raw = data.teamStates[myTeamId];
+        setTeamState({
+          ...raw,
+          squad: Array.isArray(raw.squad) ? raw.squad : [],
+          retentions: Array.isArray(raw.retentions) ? raw.retentions : [],
+          rtmPlayers: Array.isArray(raw.rtmPlayers) ? raw.rtmPlayers : [],
+        });
       }
       if (data.status === 'auction') navigate(`/auction/${code}`);
 
@@ -102,7 +108,14 @@ export default function Retention() {
       } else {
         const myTeamId = room?.players?.[playerId]?.teamId;
         const updates = {};
-        let state = { ...room.teamStates[myTeamId] };
+        const rawState = room.teamStates[myTeamId];
+        // Sanitize arrays that Firebase may return as null
+        let state = {
+          ...rawState,
+          squad: Array.isArray(rawState.squad) ? rawState.squad : [],
+          retentions: Array.isArray(rawState.retentions) ? rawState.retentions : [],
+          rtmPlayers: Array.isArray(rawState.rtmPlayers) ? rawState.rtmPlayers : [],
+        };
         selected.forEach((p, i) => { state = applyRetention(state, p, i); });
         updates[`rooms/${code}/teamStates/${myTeamId}`] = state;
         updates[`rooms/${code}/retentionDone/${playerId}`] = true;
