@@ -1,3 +1,5 @@
+import { TEAM_SQUAD_MAP } from '../data/players.js';
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function callOpenRouter(apiKey, messages, maxTokens = 200) {
@@ -57,7 +59,6 @@ export async function fetchLatestSquads(apiKey, playerPool) {
     rr: 'Rajasthan Royals', pbks: 'Punjab Kings', lsg: 'Lucknow Super Giants', gt: 'Gujarat Titans',
   };
 
-  const { TEAM_SQUAD_MAP } = await import('../data/players.js');
   const normalize = str => str.toLowerCase().replace(/[^a-z0-9]/g, '');
   const slugMap = {};
   const teamEntries = Object.entries(TEAM_SQUAD_MAP);
