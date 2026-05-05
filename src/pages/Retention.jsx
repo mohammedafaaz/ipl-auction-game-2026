@@ -4,7 +4,7 @@ import { database } from '../firebase.js';
 import { ref, onValue, off, update } from 'firebase/database';
 import { RETENTION_COSTS, MAX_RETENTIONS, formatCrore, getTeamById } from '../data/teams.js';
 import { useApp } from '../AppContext.jsx';
-import { applyRetention, initTeamState } from '../utils/gameLogic.js';
+import { applyRetention, initTeamState, sanitizeTeamStatesForFirebase } from '../utils/gameLogic.js';
 import TeamBadge from '../components/TeamBadge.jsx';
 import PurseBar from '../components/PurseBar.jsx';
 
@@ -130,7 +130,7 @@ export default function Retention() {
           rtmPlayers: Array.isArray(rawState.rtmPlayers) ? rawState.rtmPlayers : [],
         };
         selected.forEach((p, i) => { state = applyRetention(state, p, i); });
-        updates[`rooms/${code}/teamStates/${myTeamId}`] = state;
+        updates[`rooms/${code}/teamStates/${myTeamId}`] = sanitizeTeamStatesForFirebase({ [myTeamId]: state })[myTeamId];
         updates[`rooms/${code}/retentionDone/${playerId}`] = true;
 
         // Mark retained players

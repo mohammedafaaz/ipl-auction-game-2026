@@ -5,7 +5,7 @@ import { ref, onValue, off, update } from 'firebase/database';
 import { TEAMS, getTeamById } from '../data/teams.js';
 import { useApp } from '../AppContext.jsx';
 import TeamBadge from '../components/TeamBadge.jsx';
-import { assignRTMEligibility, initTeamState } from '../utils/gameLogic.js';
+import { assignRTMEligibility, initTeamState, sanitizeTeamStatesForFirebase } from '../utils/gameLogic.js';
 import { POOLS } from '../data/teams.js';
 import { PLAYER_POOL } from '../data/players.js';
 
@@ -69,7 +69,7 @@ export default function Lobby() {
       await update(ref(database, `rooms/${code}`), {
         status: 'retention',
         playerPool: playersWithMeta,
-        teamStates,
+        teamStates: sanitizeTeamStatesForFirebase(teamStates),
         rtmMap,
         auction: {
           currentBid: 0,

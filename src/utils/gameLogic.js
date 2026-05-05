@@ -128,3 +128,47 @@ export function getRoleBadgeClass(role) {
   };
   return map[role] || 'badge-batter';
 }
+
+// Sanitize squad players for Firebase storage — prevents circular references
+// Only stores essential fields instead of full player objects
+export function sanitizeSquadPlayer(player) {
+  if (!player || typeof player !== 'object') return player;
+  return {
+    id: player.id,
+    name: player.name,
+    role: player.role,
+    nationality: player.nationality,
+    basePrice: player.basePrice,
+    isOverseas: player.isOverseas,
+    isCapped: player.isCapped,
+    pool: player.pool,
+    soldPrice: player.soldPrice,
+    source: player.source || 'auction',
+  };
+}
+
+// Sanitize entire team state for Firebase storage
+export function sanitizeTeamStateForFirebase(teamState) {
+  if (!teamState) return teamState;
+  return {
+    id: teamState.id,
+    purse: teamState.purse,
+    squad: Array.isArray(teamState.squad) 
+      ? teamState.squad.map(p => sanitizeSquadPlayer(p))
+      : [],
+    retentions: Array.isArray(teamState.retentions) ? teamState.retentions : [],
+    rtmCards: teamState.rtmCards,
+    rtmPlayers: Array.isArray(teamState.rtmPlayers) ? teamState.rtmPlayers : [],
+    purseHistory: Array.isArray(teamState.purseHistory) ? teamState.purseHistory : [],
+  };
+}
+
+// Sanitize all team states before Firebase update
+export function sanitizeTeamStatesForFirebase(teamStates) {
+  if (!teamStates || typeof teamStates !== 'object') return teamStates;
+  const result = {};
+  for (const [teamId, state] of Object.entries(teamStates)) {
+    result[teamId] = sanitizeTeamStateForFirebase(state);
+  }
+  return result;
+}
