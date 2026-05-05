@@ -127,6 +127,23 @@ export default function Auction() {
 
     setSkippedTeams(new Set());
     resetForPlayer(remaining[0]);
+
+    // In multiplayer, write next player + reset auction state to Firebase
+    if (!isSolo && database) {
+      update(ref(database, `rooms/${code}`), {
+        playerPool: pool,
+        teamStates: states,
+        auction: {
+          currentPlayerId: remaining[0].id,
+          currentBid: remaining[0].basePrice,
+          leadingTeam: null,
+          bidHistory: [],
+          timerExpiry: Date.now() + TIMER_DURATION,
+          phase: 'bidding',
+          soldInfo: null,
+        },
+      });
+    }
   }, [isSolo, code, navigate, resetForPlayer]);
 
   // Sync pausedRef so AI timeout callback can read it without stale closure
@@ -193,8 +210,8 @@ export default function Auction() {
       const sorted = sortPlayersByPool(pool.filter(p => !p.auctioned), POOLS);
       setPlayerPool(pool);
       setTeamStates(states);
-      // Always sync currentPlayer from Firebase pool in multiplayer
-      if (sorted.length > 0) resetForPlayer(sorted[0]);
+      // In multiplayer, only set currentPlayer if not already set (don't override on every update)
+      if (!currentPlayer && sorted.length > 0) resetForPlayer(sorted[0]);
       if (data.auction) {
         setCurrentBid(data.auction.currentBid || 0);
         setLeadingTeam(data.auction.leadingTeam || null);
@@ -202,6 +219,11 @@ export default function Auction() {
         if (data.auction.timerExpiry) setTimerExpiry(data.auction.timerExpiry);
         setPhase(data.auction.phase || 'bidding');
         setSoldInfo(data.auction.soldInfo || null);
+        // Sync current player from Firebase auction state
+        if (data.auction.currentPlayerId) {
+          const p = pool.find(pl => pl.id === data.auction.currentPlayerId);
+          if (p) setCurrentPlayer(p);
+        }
       }
       setRoom(data);
       if (data.status === 'ended') navigate(`/final/${code}`);
@@ -403,6 +425,8 @@ export default function Auction() {
     if (isSolo) {
       sessionStorage.setItem('soloTeamStates', JSON.stringify(newStates));
       sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
+    } else if (database) {
+      update(ref(database, `rooms/${code}`), { teamStates: newStates });
     }
 
     showToast(`RTM used! ${currentPlayer.name} retained for ${formatCrore(matchPrice)}`, 'success');
@@ -412,6 +436,8 @@ export default function Auction() {
 
   const handleTimerExpire = useCallback(() => {
     if (phase !== 'bidding') return;
+    // In multiplayer, only host handles timer expiry to avoid race conditions
+    if (!isSolo && !isHost) return;
     clearTimeout(aiTimerRef.current);
 
     const capturedHistory = bidHistoryRef.current;
@@ -424,6 +450,7 @@ export default function Auction() {
         const updatedPool = playerPool.map(p => p.id === currentPlayer?.id ? { ...p, auctioned: true } : p);
         setPlayerPool(updatedPool);
         if (isSolo) sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
+        else if (database) update(ref(database, `rooms/${code}/auction`), { phase: 'unsold' });
         advanceToNext(teamStates, updatedPool);
       }, 2000);
     } else {
@@ -445,6 +472,14 @@ export default function Auction() {
       if (isSolo) {
         sessionStorage.setItem('soloTeamStates', JSON.stringify(newStates));
         sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
+      } else if (database) {
+        update(ref(database, `rooms/${code}/auction`), {
+          phase: 'sold',
+          soldInfo: { teamId: winner, price },
+          currentBid: price,
+          leadingTeam: winner,
+        });
+        update(ref(database, `rooms/${code}`), { teamStates: newStates });
       }
 
       recordRecent(currentPlayer, 'sold', winner, price, capturedHistory);

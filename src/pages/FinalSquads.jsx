@@ -14,6 +14,7 @@ export default function FinalSquads() {
 
   const isSolo = sessionStorage.getItem('soloMode') === 'true';
   const soloTeamId = sessionStorage.getItem('soloTeamId');
+  const playerId = sessionStorage.getItem('playerId');
 
   const [teamStates, setTeamStates] = useState({});
   const [selectedTeam, setSelectedTeam] = useState(null);
@@ -46,15 +47,20 @@ export default function FinalSquads() {
     sessionStorage.setItem('tournamentId', tournamentId);
     sessionStorage.setItem('tournamentTeamId', resolvedMyTeamId);
     sessionStorage.setItem('tournamentData', JSON.stringify(tournamentData));
-    // Save each team's auctioned squad for HandCricket
     sessionStorage.setItem('tournamentTeamStates', JSON.stringify(teamStates));
     localStorage.setItem('activeTournament', JSON.stringify({ tournamentId, myTeamId: resolvedMyTeamId }));
     localStorage.setItem('tournamentData', JSON.stringify(tournamentData));
     localStorage.setItem('tournamentTeamStates', JSON.stringify(teamStates));
 
-    // Try Firebase
+    // Write to Firebase for multiplayer
     if (database) {
-      try { await set(ref(database, `tournaments/${tournamentId}`), tournamentData); } catch (e) { console.warn('Firebase write failed:', e.message); }
+      try {
+        await set(ref(database, `tournaments/${tournamentId}`), tournamentData);
+        // Also update room with tournamentId so all players can navigate
+        if (!isSolo && code) {
+          await set(ref(database, `rooms/${code}/tournamentId`), tournamentId);
+        }
+      } catch (e) { console.warn('Firebase write failed:', e.message); }
     }
 
     setStartingTournament(false);
