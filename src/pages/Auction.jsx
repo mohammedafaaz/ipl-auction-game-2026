@@ -199,11 +199,7 @@ export default function Auction() {
         setCurrentBid(data.auction.currentBid || 0);
         setLeadingTeam(data.auction.leadingTeam || null);
         setBidHistory(data.auction.bidHistory || []);
-        // Only update timer from Firebase if it changed significantly
-        const fbExpiry = data.auction.timerExpiry;
-        if (fbExpiry && Math.abs(fbExpiry - Date.now()) > 2000) {
-          setTimerExpiry(fbExpiry);
-        }
+        if (data.auction.timerExpiry) setTimerExpiry(data.auction.timerExpiry);
         setPhase(data.auction.phase || 'bidding');
         setSoldInfo(data.auction.soldInfo || null);
       }
@@ -264,10 +260,14 @@ export default function Auction() {
     playBidSound();
 
     if (!isSolo && database) {
+      const newExpiry = Date.now() + BID_RESET_DURATION;
+      const newHistory = [{ teamId: myTeamId, amount: nextBid, ts: Date.now() }, ...bidHistory.slice(0, 9)];
       update(ref(database, `rooms/${code}/auction`), {
-        currentBid: nextBid, leadingTeam: myTeamId,
-        bidHistory: [{ teamId: myTeamId, amount: nextBid, ts: Date.now() }, ...bidHistory.slice(0, 9)],
-        timerExpiry: Date.now() + BID_RESET_DURATION,
+        currentBid: nextBid,
+        leadingTeam: myTeamId,
+        bidHistory: newHistory,
+        timerExpiry: newExpiry,
+        phase: 'bidding',
       });
     }
   }, [myTeamState, phase, currentBid, leadingTeam, myTeamId, isSolo, bidHistory, showToast, code]);
@@ -356,22 +356,31 @@ export default function Auction() {
         }, 2000);
       }
     } else {
-      // Multiplayer mode: add team to skipped list
+      // Multiplayer skip — write to Firebase so all players see it
+      if (!database) return;
       const newSkipped = new Set(skippedTeams);
       newSkipped.add(myTeamId);
       setSkippedTeams(newSkipped);
 
-      if (newSkipped.size === TEAMS.length) {
+      // Get all human player team IDs
+      const humanTeamIds = Object.values(room?.players || {}).map(p => p.teamId);
+      const allHumansSkipped = humanTeamIds.every(tid => newSkipped.has(tid));
+
+      if (allHumansSkipped && !leadingTeam) {
+        // Nobody bid — mark unsold and advance
         clearTimeout(aiTimerRef.current);
-        setPhase('unsold');
-        setTimeout(() => {
-          const updatedPool = playerPool.map(p => p.id === currentPlayer.id ? { ...p, auctioned: true } : p);
-          setPlayerPool(updatedPool);
-          if (database) {
-            update(ref(database, `rooms/${code}`), { playerPool: updatedPool, auction: { currentBid: 0, leadingTeam: null, bidHistory: [], timerExpiry: Date.now() + TIMER_DURATION, phase: 'bidding', soldInfo: null } });
-          }
-          advanceToNext(teamStates, updatedPool);
-        }, 2000);
+        const updatedPool = playerPool.map(p => p.id === currentPlayer.id ? { ...p, auctioned: true } : p);
+        await update(ref(database, `rooms/${code}`), {
+          playerPool: updatedPool,
+          auction: {
+            currentBid: 0,
+            leadingTeam: null,
+            bidHistory: [],
+            timerExpiry: Date.now() + TIMER_DURATION,
+            phase: 'bidding',
+            soldInfo: null,
+          },
+        });
       }
     }
   }, [phase, currentPlayer, playerPool, teamStates, isSolo, myTeamId, myTeamState, skippedTeams, leadingTeam, currentBid, recordRecent, advanceToNext, code]);

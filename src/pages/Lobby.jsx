@@ -69,6 +69,14 @@ export default function Lobby() {
         playerPool: playersWithMeta,
         teamStates,
         rtmMap,
+        auction: {
+          currentBid: 0,
+          leadingTeam: null,
+          bidHistory: [],
+          timerExpiry: Date.now() + 30000,
+          phase: 'bidding',
+          soldInfo: null,
+        },
       });
     } catch (e) {
       showToast('Failed to start: ' + e.message, 'error');
