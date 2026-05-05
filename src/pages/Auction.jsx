@@ -193,12 +193,17 @@ export default function Auction() {
       const sorted = sortPlayersByPool(pool.filter(p => !p.auctioned), POOLS);
       setPlayerPool(pool);
       setTeamStates(states);
-      if (!currentPlayer && sorted.length > 0) resetForPlayer(sorted[0]);
+      // Always sync currentPlayer from Firebase pool in multiplayer
+      if (sorted.length > 0) resetForPlayer(sorted[0]);
       if (data.auction) {
         setCurrentBid(data.auction.currentBid || 0);
         setLeadingTeam(data.auction.leadingTeam || null);
         setBidHistory(data.auction.bidHistory || []);
-        setTimerExpiry(data.auction.timerExpiry || Date.now() + TIMER_DURATION);
+        // Only update timer from Firebase if it changed significantly
+        const fbExpiry = data.auction.timerExpiry;
+        if (fbExpiry && Math.abs(fbExpiry - Date.now()) > 2000) {
+          setTimerExpiry(fbExpiry);
+        }
         setPhase(data.auction.phase || 'bidding');
         setSoldInfo(data.auction.soldInfo || null);
       }
@@ -458,7 +463,7 @@ export default function Auction() {
     && canBid(myTeamState, soldInfo.price);
 
   const nextBidAmount = currentPlayer ? getNextBidAmount(currentBid) : 0;
-  const canHumanBid = scoutReady && myTeamState && phase === 'bidding' && !skippedTeams.has(myTeamId) && leadingTeam !== myTeamId && canBid(myTeamState, nextBidAmount);
+  const canHumanBid = myTeamState && phase === 'bidding' && !skippedTeams.has(myTeamId) && leadingTeam !== myTeamId && canBid(myTeamState, nextBidAmount);
   const hasSkipped = skippedTeams.has(myTeamId);
   const auctionedCount = playerPool.filter(p => p.auctioned).length;
   const totalCount = playerPool.length;
