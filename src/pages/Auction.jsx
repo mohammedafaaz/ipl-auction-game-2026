@@ -4,7 +4,7 @@ import { database } from '../firebase.js';
 import { ref, onValue, off, update, serverTimestamp, onDisconnect } from 'firebase/database';
 import { TEAMS, POOLS, getNextBidAmount, formatCrore, getTeamById } from '../data/teams.js';
 import { useApp } from '../AppContext.jsx';
-import { canBid, canUseRTM, applyBidWin, applyRTM, sortPlayersByPool, sanitizeTeamStatesForFirebase } from '../utils/gameLogic.js';
+import { canBid, canUseRTM, applyBidWin, applyRTM, sortPlayersByPool, sanitizeTeamStatesForFirebase, sanitizeTeamStateForFirebase } from '../utils/gameLogic.js';
 import { shouldAIBid, getAIBidAmount, simulateBiddingWar } from '../utils/aiAuction.js';
 import { getPlayerInsight } from '../utils/openrouter.js';
 import { playBidSound, playGavelSound, playCrowdCheer, playFanfare, playUnsoldSound, playNewPlayerSound } from '../utils/sounds.js';
@@ -216,6 +216,7 @@ export default function Auction() {
 
   const lastSyncRef = useRef({ auctionedIds: null, currentPlayerId: null });
   const isHostRef = useRef(false);
+  const timerExpireProcessingRef = useRef(false);
 
   // Sync server time offset on mount
   useEffect(() => {
@@ -508,19 +509,26 @@ export default function Auction() {
       sessionStorage.setItem('soloTeamStates', JSON.stringify(newStates));
       sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
     } else if (database) {
-      update(ref(database, `rooms/${code}`), { teamStates: sanitizeTeamStatesForFirebase(newStates) });
+      // Update only the specific team state to prevent stack overflow
+      update(ref(database, `rooms/${code}/teamStates/${myTeamId}`), 
+        sanitizeTeamStateForFirebase(newState)
+      );
     }
 
     showToast(`RTM used! ${currentPlayer.name} retained for ${formatCrore(matchPrice)}`, 'success');
     recordRecent(currentPlayer, 'sold', myTeamId, matchPrice, bidHistoryRef.current);
     advanceToNext(newStates, updatedPool);
-  }, [myTeamState, currentPlayer, phase, soldInfo, teamStates, playerPool, isSolo, myTeamId, currentBid, showToast, recordRecent, advanceToNext]);
+  }, [myTeamState, currentPlayer, phase, soldInfo, teamStates, playerPool, isSolo, myTeamId, currentBid, showToast, recordRecent, advanceToNext, code]);
 
   const isHost = !isSolo && room?.players?.[playerId]?.isHost;
 
   const handleTimerExpire = useCallback(() => {
     if (phase !== 'bidding') return;
-    // CRITICAL FIX: All users process timer expiry, but only write to Firebase once using atomic operations
+    
+    // CRITICAL: Prevent multiple users from writing simultaneously
+    if (!isSolo && timerExpireProcessingRef.current) return;
+    timerExpireProcessingRef.current = true;
+    
     clearTimeout(aiTimerRef.current);
 
     const capturedHistory = bidHistoryRef.current;
@@ -537,30 +545,37 @@ export default function Auction() {
         const remaining = sortPlayersByPool(updatedPool.filter(p => !p.auctioned), POOLS);
         
         const serverTime = Date.now() + serverTimeOffset;
-        const updates = {
-          'auction/phase': 'unsold',
-          auctionedIds: newAuctionedIds,
-        };
         
-        // If there are remaining players, set up next auction
-        if (remaining.length > 0) {
-          updates['auction/currentPlayerId'] = remaining[0].id;
-          updates['auction/currentBid'] = remaining[0].basePrice;
-          updates['auction/leadingTeam'] = null;
-          updates['auction/bidHistory'] = [];
-          updates['auction/timerExpiry'] = serverTime + TIMER_DURATION + 2000; // 2s delay for unsold display
-          updates['auction/soldInfo'] = null;
-          
-          // Transition back to bidding after 2 seconds
-          setTimeout(() => {
-            update(ref(database, `rooms/${code}/auction`), { phase: 'bidding' });
-          }, 2000);
-        } else {
-          // Auction complete
-          updates.status = 'ended';
-        }
-        
-        update(ref(database, `rooms/${code}`), updates);
+        // Single atomic update to prevent race conditions
+        update(ref(database, `rooms/${code}/auction`), {
+          phase: 'unsold',
+          currentPlayerId: remaining.length > 0 ? remaining[0].id : null,
+          currentBid: remaining.length > 0 ? remaining[0].basePrice : 0,
+          leadingTeam: null,
+          bidHistory: [],
+          timerExpiry: remaining.length > 0 ? serverTime + TIMER_DURATION + 2000 : serverTime,
+          soldInfo: null,
+        }).then(() => {
+          // Update auctionedIds after auction state is updated
+          return update(ref(database, `rooms/${code}`), {
+            auctionedIds: newAuctionedIds,
+          });
+        }).then(() => {
+          if (remaining.length > 0) {
+            // Transition back to bidding after 2 seconds
+            setTimeout(() => {
+              update(ref(database, `rooms/${code}/auction`), { phase: 'bidding' });
+              timerExpireProcessingRef.current = false;
+            }, 2000);
+          } else {
+            // Auction complete
+            update(ref(database, `rooms/${code}`), { status: 'ended' });
+            timerExpireProcessingRef.current = false;
+          }
+        }).catch(err => {
+          console.error('Timer expire update failed:', err);
+          timerExpireProcessingRef.current = false;
+        });
       } else {
         setPhase('unsold');
         setTimeout(() => {
@@ -568,6 +583,7 @@ export default function Auction() {
           setPlayerPool(updatedPool);
           sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
           advanceToNext(teamStates, updatedPool);
+          timerExpireProcessingRef.current = false;
         }, 2000);
       }
     } else {
@@ -590,19 +606,11 @@ export default function Auction() {
         sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
         setSoldInfo({ teamId: winner, price });
         setPhase('sold');
+        timerExpireProcessingRef.current = false;
       } else if (database) {
         const newAuctionedIds = updatedPool.filter(p => p.auctioned).map(p => p.id);
         const remaining = sortPlayersByPool(updatedPool.filter(p => !p.auctioned), POOLS);
         const serverTime = Date.now() + serverTimeOffset;
-        
-        const updates = {
-          'auction/phase': 'sold',
-          'auction/soldInfo': { teamId: winner, price },
-          'auction/currentBid': price,
-          'auction/leadingTeam': winner,
-          teamStates: sanitizeTeamStatesForFirebase(newStates),
-          auctionedIds: newAuctionedIds,
-        };
         
         // Check if winner can use RTM
         const canRTM = Object.values(room?.players || {}).some(p => {
@@ -614,29 +622,54 @@ export default function Auction() {
         
         const delayTime = canRTM ? 8000 : 2500;
         
-        // Set up next player after delay
-        if (remaining.length > 0) {
-          updates['auction/timerExpiry'] = serverTime + TIMER_DURATION + delayTime;
-          
-          setTimeout(() => {
-            update(ref(database, `rooms/${code}/auction`), {
-              currentPlayerId: remaining[0].id,
-              currentBid: remaining[0].basePrice,
-              leadingTeam: null,
-              bidHistory: [],
-              phase: 'bidding',
-              soldInfo: null,
-            });
-          }, delayTime);
-        } else {
-          // Auction complete
-          updates.status = 'ended';
-        }
-        
-        update(ref(database, `rooms/${code}`), updates);
+        // Sequential updates with promises to prevent stack overflow
+        update(ref(database, `rooms/${code}/auction`), {
+          phase: 'sold',
+          soldInfo: { teamId: winner, price },
+          currentBid: price,
+          leadingTeam: winner,
+        }).then(() => {
+          // Update winning team state
+          return update(ref(database, `rooms/${code}/teamStates/${winner}`), 
+            sanitizeTeamStateForFirebase(newState)
+          );
+        }).then(() => {
+          // Update auctionedIds
+          return update(ref(database, `rooms/${code}`), {
+            auctionedIds: newAuctionedIds,
+          });
+        }).then(() => {
+          // Set up next player after delay
+          if (remaining.length > 0) {
+            setTimeout(() => {
+              update(ref(database, `rooms/${code}/auction`), {
+                currentPlayerId: remaining[0].id,
+                currentBid: remaining[0].basePrice,
+                leadingTeam: null,
+                bidHistory: [],
+                timerExpiry: serverTime + TIMER_DURATION + delayTime,
+                phase: 'bidding',
+                soldInfo: null,
+              }).then(() => {
+                timerExpireProcessingRef.current = false;
+              });
+            }, delayTime);
+          } else {
+            // Auction complete
+            setTimeout(() => {
+              update(ref(database, `rooms/${code}`), { status: 'ended' }).then(() => {
+                timerExpireProcessingRef.current = false;
+              });
+            }, delayTime);
+          }
+        }).catch(err => {
+          console.error('Timer expire update failed:', err);
+          timerExpireProcessingRef.current = false;
+        });
       } else {
         setSoldInfo({ teamId: winner, price });
         setPhase('sold');
+        timerExpireProcessingRef.current = false;
       }
 
       recordRecent(currentPlayer, 'sold', winner, price, capturedHistory);
