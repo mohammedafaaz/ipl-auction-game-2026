@@ -1,24 +1,27 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { getTeamById, formatCrore } from '../data/teams.js';
 
-export default function BidTimer({ expiresAt, onExpire, paused = false, leadingTeam = null, currentBid = null }) {
+export default function BidTimer({ expiresAt, onExpire, paused = false, leadingTeam = null, currentBid = null, serverTimeOffset = 0 }) {
   const [remaining, setRemaining] = useState(30);
   const [stampKey, setStampKey] = useState(0);
   const rafRef = useRef(null);
   const firedRef = useRef(false);
   const prevLeadingTeamRef = useRef(null);
+  const hasExpiredRef = useRef(false);
 
   useEffect(() => {
     firedRef.current = false;
+    hasExpiredRef.current = false;
 
     const tick = () => {
       if (paused) { rafRef.current = requestAnimationFrame(tick); return; }
-      const now = Date.now();
+      const now = Date.now() + serverTimeOffset;
       const diff = Math.max(0, Math.ceil((expiresAt - now) / 1000));
       setRemaining(diff);
 
-      if (diff <= 0 && !firedRef.current) {
+      if (diff <= 0 && !firedRef.current && !hasExpiredRef.current) {
         firedRef.current = true;
+        hasExpiredRef.current = true;
         onExpire?.();
         return;
       }
@@ -27,7 +30,7 @@ export default function BidTimer({ expiresAt, onExpire, paused = false, leadingT
 
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [expiresAt, paused, onExpire]);
+  }, [expiresAt, paused, onExpire, serverTimeOffset]);
 
   // Trigger stamp animation when leadingTeam changes
   useEffect(() => {
