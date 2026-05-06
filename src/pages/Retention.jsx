@@ -61,12 +61,15 @@ export default function Retention() {
       if (myPlayer?.isHost && data.retentionDone) {
         const allDone = players.every(p => data.retentionDone[p.id]);
         if (allDone) {
-          // Find first player in pool
+          // Find first player in pool that hasn't been auctioned
           const pool = data.playerPool || [];
+          const auctionedIds = pool.filter(p => p.auctioned).map(p => p.id);
           const available = pool.filter(p => !p.auctioned);
           const firstPlayer = available.sort((a, b) => (a.poolOrder || 0) - (b.poolOrder || 0))[0];
+          
           update(ref(database, `rooms/${code}`), {
             status: 'auction',
+            auctionedIds: auctionedIds, // Initialize auctionedIds with retained players
             'auction/currentPlayerId': firstPlayer?.id || null,
             'auction/currentBid': firstPlayer?.basePrice || 0,
             'auction/leadingTeam': null,
@@ -109,9 +112,11 @@ export default function Retention() {
         selected.forEach((p, i) => { state = applyRetention(state, p, i); });
         states[soloTeamId] = state;
 
-        // Mark retained players as auctioned in pool
+        // CRITICAL FIX: Mark retained players as auctioned AND sold in pool
         const retainedIds = new Set(selected.map(p => p.id));
-        const updatedPool = playerPool.map(p => retainedIds.has(p.id) ? { ...p, auctioned: true } : p);
+        const updatedPool = playerPool.map(p => 
+          retainedIds.has(p.id) ? { ...p, auctioned: true, sold: true, retainedBy: soloTeamId } : p
+        );
 
         sessionStorage.setItem('soloTeamStates', JSON.stringify(states));
         sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
@@ -143,9 +148,11 @@ export default function Retention() {
         updates[`rooms/${code}/teamStates/${myTeamId}`] = sanitizeTeamStatesForFirebase({ [myTeamId]: state })[myTeamId];
         updates[`rooms/${code}/retentionDone/${playerId}`] = true;
 
-        // Mark retained players
+        // CRITICAL FIX: Mark retained players as auctioned in playerPool
         const retainedIds = new Set(selected.map(p => p.id));
-        const updatedPool = playerPool.map(p => retainedIds.has(p.id) ? { ...p, auctioned: true } : p);
+        const updatedPool = playerPool.map(p => 
+          retainedIds.has(p.id) ? { ...p, auctioned: true, sold: true, retainedBy: myTeamId } : p
+        );
         updates[`rooms/${code}/playerPool`] = updatedPool;
 
         await update(ref(database), updates);

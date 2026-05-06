@@ -277,6 +277,8 @@ export default function Auction() {
           if (p) {
             setCurrentPlayer(p);
             setScoutReady(!openRouterKey);
+            // ISSUE 2 FIX: Reset skipped teams when new player starts
+            setSkippedTeams(new Set());
           }
         } else if (!a.currentPlayerId && !currentPlayer && pool.length > 0) {
           // Initialize first player if auction state is empty
@@ -468,8 +470,9 @@ export default function Auction() {
         }, 2000);
       }
     } else {
-      // Multiplayer skip - just mark this team as skipped
+      // Multiplayer skip
       if (!database) return;
+      
       const newSkipped = new Set(skippedTeams);
       newSkipped.add(myTeamId);
       setSkippedTeams(newSkipped);
@@ -479,13 +482,21 @@ export default function Auction() {
       const humanTeamIds = Object.values(room?.players || {}).map(p => p.teamId).filter(Boolean);
       const allHumansSkipped = humanTeamIds.every(tid => newSkipped.has(tid));
 
-      // If all humans skipped AND no one has bid yet, trigger timer expiry immediately
-      if (allHumansSkipped && !leadingTeam) {
-        // Force timer to expire now
-        const serverTime = Date.now() + serverTimeOffset;
-        await update(ref(database, `rooms/${code}/auction`), {
-          timerExpiry: serverTime - 1000, // Set to past time to trigger immediate expiry
-        });
+      if (allHumansSkipped) {
+        // All humans have skipped
+        if (leadingTeam) {
+          // ISSUE 1 FIX: Someone has bid - sell immediately to highest bidder
+          const serverTime = Date.now() + serverTimeOffset;
+          await update(ref(database, `rooms/${code}/auction`), {
+            timerExpiry: serverTime - 1000, // Force immediate expiry
+          });
+        } else {
+          // ISSUE 2 FIX: No one bid - mark unsold immediately
+          const serverTime = Date.now() + serverTimeOffset;
+          await update(ref(database, `rooms/${code}/auction`), {
+            timerExpiry: serverTime - 1000, // Force immediate expiry
+          });
+        }
       }
     }
   }, [phase, currentPlayer, playerPool, teamStates, isSolo, myTeamId, myTeamState, skippedTeams, leadingTeam, currentBid, recordRecent, advanceToNext, code, room, showToast, serverTimeOffset]);
