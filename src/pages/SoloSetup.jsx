@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TEAMS, PURSE_TOTAL, RETENTION_COSTS } from '../data/teams.js';
 import { useApp } from '../AppContext.jsx';
 import { assignRTMEligibility, initTeamState } from '../utils/gameLogic.js';
 import { pickAIRetentions } from '../utils/aiAuction.js';
 import { PLAYER_POOL } from '../data/players.js';
+import TeamBadge from '../components/TeamBadge.jsx';
+import { getTeamById } from '../data/teams.js';
 
 export default function SoloSetup() {
   const navigate = useNavigate();
@@ -12,6 +14,47 @@ export default function SoloSetup() {
   const [selectedTeam, setSelectedTeam] = useState(null);
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
+  const [showResumeDialog, setShowResumeDialog] = useState(false);
+  const [savedAuction, setSavedAuction] = useState(null);
+
+  useEffect(() => {
+    // Check for saved auction in localStorage
+    const saved = localStorage.getItem('soloAuctionInProgress');
+    if (saved) {
+      try {
+        const data = JSON.parse(saved);
+        setSavedAuction(data);
+        setShowResumeDialog(true);
+      } catch (e) {
+        localStorage.removeItem('soloAuctionInProgress');
+      }
+    }
+  }, []);
+
+  const handleResume = () => {
+    if (!savedAuction) return;
+    
+    // Restore to sessionStorage
+    sessionStorage.setItem('soloMode', 'true');
+    sessionStorage.setItem('soloTeamId', savedAuction.teamId);
+    sessionStorage.setItem('soloPlayerPool', savedAuction.playerPool);
+    sessionStorage.setItem('soloTeamStates', savedAuction.teamStates);
+    
+    setShowResumeDialog(false);
+    
+    // Navigate to appropriate page
+    if (savedAuction.stage === 'retention') {
+      navigate('/solo-retention');
+    } else if (savedAuction.stage === 'auction') {
+      navigate('/solo-auction');
+    }
+  };
+
+  const handleStartNew = () => {
+    localStorage.removeItem('soloAuctionInProgress');
+    setShowResumeDialog(false);
+    setSavedAuction(null);
+  };
 
   const handleStart = async () => {
     if (!selectedTeam) { showToast('Select a team', 'error'); return; }
@@ -55,6 +98,15 @@ export default function SoloSetup() {
       sessionStorage.setItem('soloTeamId', selectedTeam);
       sessionStorage.setItem('soloPlayerPool', JSON.stringify(availablePool));
       sessionStorage.setItem('soloTeamStates', JSON.stringify(teamStates));
+
+      // Save to localStorage for recovery
+      localStorage.setItem('soloAuctionInProgress', JSON.stringify({
+        teamId: selectedTeam,
+        playerPool: JSON.stringify(availablePool),
+        teamStates: JSON.stringify(teamStates),
+        stage: 'retention',
+        timestamp: Date.now(),
+      }));
 
       navigate('/solo-retention');
     } catch (e) {
@@ -129,6 +181,36 @@ export default function SoloSetup() {
           </button>
         )}
       </div>
+
+      {/* Resume Dialog */}
+      {showResumeDialog && savedAuction && (() => {
+        const team = getTeamById(savedAuction.teamId);
+        const stageText = savedAuction.stage === 'retention' ? 'Retention Phase' : 'Auction Phase';
+        return (
+          <div className="overlay overlay-center" onClick={(e) => e.stopPropagation()}>
+            <div className="modal modal-center" style={{ maxWidth: 360 }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                {team && <TeamBadge teamId={team.id} size={40} />}
+                <div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, letterSpacing: '0.06em', color: team?.color || 'var(--gold)', lineHeight: 1 }}>Auction In Progress</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{team?.short} · {stageText}</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.5 }}>
+                You have an ongoing auction. Would you like to continue where you left off or start a new one?
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <button className="btn-primary" onClick={handleResume}>
+                  ▶ Continue Auction
+                </button>
+                <button className="btn-ghost" style={{ justifyContent: 'center', color: 'var(--crimson-bright)', borderColor: 'rgba(192,57,43,0.3)' }} onClick={handleStartNew}>
+                  🔄 Start New Auction
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

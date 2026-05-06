@@ -91,7 +91,7 @@ export default function HandCricket() {
   const team2Id = sessionStorage.getItem('currentMatchTeam2');
   const myTeamId = sessionStorage.getItem('tournamentTeamId');
 
-  const [screen, setScreen] = useState('toss');
+  const [screen, setScreen] = useState('xi-picker');
   const [tossPhase, setTossPhase] = useState('coin');
   const [tossResult, setTossResult] = useState(null);
   const [userWonToss, setUserWonToss] = useState(false);
@@ -117,9 +117,6 @@ export default function HandCricket() {
   // Player stats: { teamId: { xiIdx: { runs, balls, wickets, runsConceded, ballsBowled } } }
   const [playerStats, setPlayerStats] = useState({ [team1Id]: {}, [team2Id]: {} });
   const playerStatsRef = useRef({ [team1Id]: {}, [team2Id]: {} });
-  // Full scorecard per inning: { 1: { batting: teamId, batters: [...], bowlers: [...] }, 2: {...} }
-  const [scorecards, setScorecards] = useState({});
-  const scorecardsRef = useRef({});
 
   // ── Active player indices into each team's XI ──
   // These are "slot" indices, not auto-incrementing counters.
@@ -136,6 +133,10 @@ export default function HandCricket() {
   // XI-index of the bowler who bowled the *previous* over (can't repeat)
   const [lastBowlerXIIdx, setLastBowlerXIIdx] = useState(-1);
   const lastBowlerRef = useRef(-1);
+
+  // Track current over's bowler to prevent same bowler bowling consecutive overs
+  const [currentOverBowlerIdx, setCurrentOverBowlerIdx] = useState(-1);
+  const currentOverBowlerRef = useRef(-1);
 
   // ── Player-picker modal state ──
   // null | 'opener-bat' | 'opener-bowl'
@@ -187,7 +188,7 @@ export default function HandCricket() {
   };
 
   const aiPickBowler = (xi, lastIdx) => {
-    // Only bowlers and all-rounders can bowl
+    // Only bowlers and all-rounders can bowl, and can't bowl consecutive overs
     const eligible = xi
       .map((p, i) => ({ p, i }))
       .filter(({ p, i }) => i !== lastIdx && (p.role === 'Bowler' || p.role === 'All-Rounder'));
@@ -219,7 +220,22 @@ export default function HandCricket() {
         const bowling = batting === team1Id ? team2Id : team1Id;
         setBattingTeamId(batting);
         setBowlingTeamId(bowling);
-        setTimeout(() => setScreen('xi-picker'), 1800);
+
+        ballCountRef.current = 0; setBallCount(0);
+        dismissedRef.current = new Set(); setDismissedBatters(new Set());
+        lastBowlerRef.current = -1; setLastBowlerXIIdx(-1);
+        currentOverBowlerRef.current = -1; setCurrentOverBowlerIdx(-1);
+
+        const isMyBatting = batting === myTeamId;
+
+        if (isMyBatting) {
+          activeBowlerRef.current = 0; setActiveBowlerXIIdx(0);
+          currentOverBowlerRef.current = 0; setCurrentOverBowlerIdx(0);
+          setTimeout(() => { setScreen('live'); setPendingPick('opener-bat'); }, 1800);
+        } else {
+          activeBatterRef.current = 0; setActiveBatterXIIdx(0);
+          setTimeout(() => { setScreen('live'); setPendingPick('opener-bowl'); }, 1800);
+        }
       }
     }, 2500);
   }, [team1Id, team2Id, myTeamId]);
@@ -229,33 +245,32 @@ export default function HandCricket() {
     const bowling = batting === team1Id ? team2Id : team1Id;
     setBattingTeamId(batting);
     setBowlingTeamId(bowling);
-    setScreen('xi-picker');
+
+    ballCountRef.current = 0; setBallCount(0);
+    dismissedRef.current = new Set(); setDismissedBatters(new Set());
+    lastBowlerRef.current = -1; setLastBowlerXIIdx(-1);
+    currentOverBowlerRef.current = -1; setCurrentOverBowlerIdx(-1);
+
+    const isMyBatting = batting === myTeamId;
+
+    if (isMyBatting) {
+      activeBowlerRef.current = 0; setActiveBowlerXIIdx(0);
+      currentOverBowlerRef.current = 0; setCurrentOverBowlerIdx(0);
+      setPendingPick('opener-bat');
+    } else {
+      activeBatterRef.current = 0; setActiveBatterXIIdx(0);
+      setPendingPick('opener-bowl');
+    }
+    setScreen('live');
   }, [team1Id, team2Id, myTeamId]);
 
-  // ── XI selected → show first player picker ──
+  // ── XI selected → proceed to toss ──
   const handleStartMatch = useCallback((myXI) => {
     const xi1 = myTeamId === team1Id ? myXI : autoXI(team1Squad);
     const xi2 = myTeamId === team1Id ? autoXI(team2Squad) : myXI;
     setTeam1XI(xi1);
     setTeam2XI(xi2);
-
-    ballCountRef.current = 0; setBallCount(0);
-    dismissedRef.current = new Set(); setDismissedBatters(new Set());
-    lastBowlerRef.current = -1; setLastBowlerXIIdx(-1);
-
-    const batting = battingTeamRef.current;
-    const isMyBatting = batting === myTeamId;
-
-    if (isMyBatting) {
-      // User bats first: AI auto-picks bowler (index 0), user picks opener batter
-      activeBowlerRef.current = 0; setActiveBowlerXIIdx(0);
-      setPendingPick('opener-bat');
-    } else {
-      // User bowls first: AI auto-picks opener batter (index 0), user picks opening bowler
-      activeBatterRef.current = 0; setActiveBatterXIIdx(0);
-      setPendingPick('opener-bowl');
-    }
-    setScreen('live');
+    setScreen('toss');
   }, [myTeamId, team1Id, team1Squad, team2Squad]);
 
   // ── Player chosen from picker ──
@@ -267,10 +282,16 @@ export default function HandCricket() {
       activeBatterRef.current = xiIdx;
       setActiveBatterXIIdx(xiIdx);
     } else {
-      // bowler picks: rotate lastBowler first
-      const prev = activeBowlerRef.current;
-      lastBowlerRef.current = prev; setLastBowlerXIIdx(prev);
-      activeBowlerRef.current = xiIdx; setActiveBowlerXIIdx(xiIdx);
+      // bowler picks: set as current over bowler and update last bowler
+      const prevBowler = currentOverBowlerRef.current;
+      if (prevBowler !== -1) {
+        lastBowlerRef.current = prevBowler;
+        setLastBowlerXIIdx(prevBowler);
+      }
+      activeBowlerRef.current = xiIdx;
+      setActiveBowlerXIIdx(xiIdx);
+      currentOverBowlerRef.current = xiIdx;
+      setCurrentOverBowlerIdx(xiIdx);
     }
   }, [pendingPick]);
 
@@ -291,43 +312,125 @@ export default function HandCricket() {
     const idx = parseInt(matchId, 10);
     const isPlayoff = matchId?.startsWith('playoff_');
     const playoffStage = isPlayoff ? matchId.replace('playoff_', '') : null;
-    const raw = sessionStorage.getItem('tournamentData');
-    if (raw) {
-      const data = JSON.parse(raw);
-      if (!isNaN(idx) && data.schedule) {
-        // Group stage match
-        data.schedule[idx] = { ...data.schedule[idx], status: 'completed', result };
-        if (data.pointsTable) data.pointsTable = applyResultToTable(data.pointsTable, result, team1Id, team2Id);
-        const pending = (data.schedule || []).filter(m => m.status === 'pending');
-        if (pending.length === 0 && data.status === 'group') {
-          data.status = 'playoffs';
-          const top4 = sortedTable(data.pointsTable).slice(0, 4).map(t => t.teamId);
-          data.playoffs = generatePlayoffs(top4);
+    
+    console.log('finishMatch called - matchId:', matchId, 'idx:', idx, 'isPlayoff:', isPlayoff);
+    
+    // Determine tournament mode
+    const isPostAuction = sessionStorage.getItem('postAuctionMode') === 'true';
+    // Check if this is actually a multiplayer tournament by looking at the tournament data
+    const tournamentData = sessionStorage.getItem('tournamentData');
+    const isActualMultiplayer = tournamentData ? JSON.parse(tournamentData).mode === 'multiplayer' : false;
+    const isMultiplayer = isActualMultiplayer && tournamentId && !isPostAuction && database;
+    
+    console.log('Tournament mode - isPostAuction:', isPostAuction, 'isMultiplayer:', isMultiplayer);
+    
+    // For post-auction and pre-squad (local), update sessionStorage
+    if (!isMultiplayer) {
+      const storageKey = isPostAuction ? 'postAuctionTournamentData' : 'tournamentData';
+      const raw = sessionStorage.getItem(storageKey);
+      if (raw) {
+        const data = JSON.parse(raw);
+        
+        // Ensure schedule is an array
+        if (data.schedule && !Array.isArray(data.schedule)) {
+          data.schedule = Object.values(data.schedule);
         }
-      } else if (isPlayoff && data.playoffs) {
-        // Playoff match
-        const winner = result.winner || team1Id;
-        const loser = winner === team1Id ? team2Id : team1Id;
-        data.playoffs[playoffStage] = { ...data.playoffs[playoffStage], status: 'completed', result };
-        if (playoffStage === 'q1') { data.playoffs.q2 = { ...data.playoffs.q2, team2: loser, status: 'pending' }; data.playoffs.final = { ...data.playoffs.final, team1: winner, status: 'pending' }; }
-        else if (playoffStage === 'elim') { data.playoffs.q2 = { ...data.playoffs.q2, team1: winner, status: 'pending' }; }
-        else if (playoffStage === 'q2') { data.playoffs.final = { ...data.playoffs.final, team2: winner, status: 'pending' }; }
-        else if (playoffStage === 'final') { data.status = 'completed'; data.champion = winner; }
-      }
-      sessionStorage.setItem('tournamentData', JSON.stringify(data));
-      if (tournamentId && database) {
-        const updates = {};
-        if (!isNaN(idx)) {
-          updates[`tournaments/${tournamentId}/schedule/${idx}/status`] = 'completed';
-          updates[`tournaments/${tournamentId}/schedule/${idx}/result`] = result;
-          if (data.pointsTable) updates[`tournaments/${tournamentId}/pointsTable`] = data.pointsTable;
-          if (data.status === 'playoffs') { updates[`tournaments/${tournamentId}/status`] = 'playoffs'; updates[`tournaments/${tournamentId}/playoffs`] = data.playoffs; }
-        } else if (isPlayoff) {
-          updates[`tournaments/${tournamentId}/playoffs`] = data.playoffs;
-          if (data.status === 'completed') { updates[`tournaments/${tournamentId}/status`] = 'completed'; updates[`tournaments/${tournamentId}/champion`] = data.champion; }
+        
+        console.log('Before update - schedule length:', data.schedule?.length, 'updating idx:', idx);
+        
+        if (!isNaN(idx) && data.schedule && Array.isArray(data.schedule)) {
+          // Update match status and result by index
+          const updatedSchedule = [...data.schedule];
+          if (updatedSchedule[idx]) {
+            console.log('Updating match at index', idx, 'from status:', updatedSchedule[idx].status, 'to: completed');
+            updatedSchedule[idx] = { ...updatedSchedule[idx], status: 'completed', result };
+            data.schedule = updatedSchedule;
+            
+            console.log('Match completed:', idx, 'New status:', updatedSchedule[idx].status);
+          } else {
+            console.error('Match not found at index:', idx, 'schedule length:', updatedSchedule.length);
+          }
+          
+          if (data.pointsTable) data.pointsTable = applyResultToTable(data.pointsTable, result, team1Id, team2Id);
+          const pending = data.schedule.filter(m => m.status === 'pending');
+          if (pending.length === 0 && data.status === 'group') {
+            data.status = 'playoffs';
+            const top4 = sortedTable(data.pointsTable).slice(0, 4).map(t => t.teamId);
+            data.playoffs = generatePlayoffs(top4);
+          }
+          
+          console.log('Saving to sessionStorage, key:', storageKey);
+          console.log('Match statuses after update:', data.schedule.map((m, i) => ({ idx: i, matchNo: m.matchNo, status: m.status })));
+          
+          sessionStorage.setItem(storageKey, JSON.stringify(data));
+          if (!isPostAuction) localStorage.setItem(storageKey, JSON.stringify(data));
+          
+          console.log('Save complete!');
+        } else if (isPlayoff && data.playoffs) {
+          const winner = result.winner || team1Id;
+          const loser = winner === team1Id ? team2Id : team1Id;
+          data.playoffs[playoffStage] = { ...data.playoffs[playoffStage], status: 'completed', result };
+          if (playoffStage === 'q1') { data.playoffs.q2 = { ...data.playoffs.q2, team2: loser, status: 'pending' }; data.playoffs.final = { ...data.playoffs.final, team1: winner, status: 'pending' }; }
+          else if (playoffStage === 'elim') { data.playoffs.q2 = { ...data.playoffs.q2, team1: winner, status: 'pending' }; }
+          else if (playoffStage === 'q2') { data.playoffs.final = { ...data.playoffs.final, team2: winner, status: 'pending' }; }
+          else if (playoffStage === 'final') { data.status = 'completed'; data.champion = winner; }
+          sessionStorage.setItem(storageKey, JSON.stringify(data));
+          if (!isPostAuction) localStorage.setItem(storageKey, JSON.stringify(data));
         }
-        update(ref(database), updates).catch(e => console.warn('Firebase update failed:', e.message));
       }
+    }
+    
+    // For multiplayer, update Firebase
+    if (isMultiplayer) {
+      const updates = {};
+      if (!isNaN(idx)) {
+        updates[`tournaments/${tournamentId}/schedule/${idx}/status`] = 'completed';
+        updates[`tournaments/${tournamentId}/schedule/${idx}/result`] = result;
+        
+        // Also update points table
+        const raw = sessionStorage.getItem('tournamentData');
+        if (raw) {
+          const data = JSON.parse(raw);
+          if (data.pointsTable) {
+            const updatedTable = applyResultToTable(data.pointsTable, result, team1Id, team2Id);
+            updates[`tournaments/${tournamentId}/pointsTable`] = updatedTable;
+            
+            const pending = (data.schedule || []).filter((m, i) => i !== idx && m.status === 'pending');
+            if (pending.length === 0 && data.status === 'group') {
+              updates[`tournaments/${tournamentId}/status`] = 'playoffs';
+              const top4 = sortedTable(updatedTable).slice(0, 4).map(t => t.teamId);
+              updates[`tournaments/${tournamentId}/playoffs`] = generatePlayoffs(top4);
+            }
+          }
+        }
+      } else if (isPlayoff) {
+        const raw = sessionStorage.getItem('tournamentData');
+        if (raw) {
+          const data = JSON.parse(raw);
+          if (data.playoffs) {
+            const winner = result.winner || team1Id;
+            const loser = winner === team1Id ? team2Id : team1Id;
+            const updatedPlayoffs = { ...data.playoffs };
+            updatedPlayoffs[playoffStage] = { ...updatedPlayoffs[playoffStage], status: 'completed', result };
+            
+            if (playoffStage === 'q1') {
+              updatedPlayoffs.q2 = { ...updatedPlayoffs.q2, team2: loser, status: 'pending' };
+              updatedPlayoffs.final = { ...updatedPlayoffs.final, team1: winner, status: 'pending' };
+            } else if (playoffStage === 'elim') {
+              updatedPlayoffs.q2 = { ...updatedPlayoffs.q2, team1: winner, status: 'pending' };
+            } else if (playoffStage === 'q2') {
+              updatedPlayoffs.final = { ...updatedPlayoffs.final, team2: winner, status: 'pending' };
+            } else if (playoffStage === 'final') {
+              updates[`tournaments/${tournamentId}/status`] = 'completed';
+              updates[`tournaments/${tournamentId}/champion`] = winner;
+            }
+            
+            updates[`tournaments/${tournamentId}/playoffs`] = updatedPlayoffs;
+          }
+        }
+      }
+      
+      update(ref(database), updates).catch(e => console.warn('Firebase update failed:', e.message));
     }
   }, [team1Id, team2Id, tournamentId]);
 
@@ -389,12 +492,20 @@ export default function HandCricket() {
     const prevStats = playerStatsRef.current;
     const batStats = prevStats[currentBatting]?.[currentBatterIdx] ?? { runs: 0, balls: 0, out: false };
     const bowlStats = prevStats[currentBowling]?.[currentBowlerIdx] ?? { wickets: 0, runsConceded: 0, balls: 0 };
-    const newBatStats = { ...batStats, runs: batStats.runs + (isOut ? 0 : scored), balls: batStats.balls + 1, out: isOut ? true : batStats.out };
-    const newBowlStats = { ...bowlStats, wickets: bowlStats.wickets + (isOut ? 1 : 0), runsConceded: bowlStats.runsConceded + (isOut ? 0 : scored), balls: bowlStats.balls + 1 };
+    const newBatStats = { 
+      runs: (batStats.runs || 0) + (isOut ? 0 : scored), 
+      balls: (batStats.balls || 0) + 1, 
+      out: isOut ? true : batStats.out 
+    };
+    const newBowlStats = { 
+      wickets: (bowlStats.wickets || 0) + (isOut ? 1 : 0), 
+      runsConceded: (bowlStats.runsConceded || 0) + (isOut ? 0 : scored), 
+      balls: (bowlStats.balls || 0) + 1 
+    };
     const updatedStats = {
       ...prevStats,
-      [currentBatting]: { ...prevStats[currentBatting], [currentBatterIdx]: newBatStats },
-      [currentBowling]: { ...prevStats[currentBowling], [currentBowlerIdx]: newBowlStats },
+      [currentBatting]: { ...(prevStats[currentBatting] || {}), [currentBatterIdx]: newBatStats },
+      [currentBowling]: { ...(prevStats[currentBowling] || {}), [currentBowlerIdx]: newBowlStats },
     };
     playerStatsRef.current = updatedStats;
     setPlayerStats({ ...updatedStats });
@@ -420,6 +531,7 @@ export default function HandCricket() {
           ballCountRef.current = 0; setBallCount(0);
           dismissedRef.current = new Set(); setDismissedBatters(new Set());
           lastBowlerRef.current = -1; setLastBowlerXIIdx(-1);
+          currentOverBowlerRef.current = -1; setCurrentOverBowlerIdx(-1);
           setBattingTeamId(newBatting);
           setBowlingTeamId(newBowling);
           transitioning.current = false;
@@ -428,6 +540,7 @@ export default function HandCricket() {
             // User bats inning 2: AI picks opening bowler, user picks opener batter
             const aiBowler = aiPickBowler(newBowlingXI, -1);
             activeBowlerRef.current = aiBowler; setActiveBowlerXIIdx(aiBowler);
+            currentOverBowlerRef.current = aiBowler; setCurrentOverBowlerIdx(aiBowler);
             setPendingPick('innings2-bat');
           } else {
             // User bowls inning 2: AI picks opener batter, user picks opening bowler
@@ -463,14 +576,20 @@ export default function HandCricket() {
     if (overJustEnded) {
       if (!isMyBatting) {
         // User is bowling — show picker to choose bowler for next over
-        // Slight delay if a wicket just fell so animations don't clash
+        // Update last bowler before showing picker
+        const prevBowler = currentOverBowlerRef.current;
+        if (prevBowler !== -1) {
+          lastBowlerRef.current = prevBowler;
+          setLastBowlerXIIdx(prevBowler);
+        }
         setTimeout(() => setPendingPick('new-over'), isOut ? 650 : 200);
       } else {
         // AI is bowling — auto-rotate bowler
-        const prevBowler = activeBowlerRef.current;
+        const prevBowler = currentOverBowlerRef.current;
         const aiBowler = aiPickBowler(bowlingXI, prevBowler);
         lastBowlerRef.current = prevBowler; setLastBowlerXIIdx(prevBowler);
         activeBowlerRef.current = aiBowler; setActiveBowlerXIIdx(aiBowler);
+        currentOverBowlerRef.current = aiBowler; setCurrentOverBowlerIdx(aiBowler);
       }
     }
   }, [pendingPick, team1Id, team1XI, team2XI, myTeamId, finishMatch]);
@@ -671,7 +790,7 @@ export default function HandCricket() {
             mode={pickerMode}
             xi={userOwnXI}
             usedBatterIndices={dismissedBatters}
-            lastBowlerIdx={lastBowlerXIIdx}
+            lastBowlerIdx={currentOverBowlerIdx}
             onPick={handlePickPlayer}
             title={pickerTitle}
           />
@@ -747,13 +866,7 @@ export default function HandCricket() {
                     </div>
                     {xi.map((p, i) => {
                       const s = stats[i];
-                      if (!s) return (
-                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 40px 40px', gap: 4, padding: '5px 6px', borderRadius: 4, marginBottom: 2, opacity: 0.4 }}>
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.name}</div>
-                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', textAlign: 'center' }}>—</div>
-                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', textAlign: 'center' }}>—</div>
-                        </div>
-                      );
+                      if (!s || s.balls === 0) return null;
                       return (
                         <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 40px 40px', gap: 4, padding: '5px 6px', background: s.out ? 'transparent' : 'rgba(46,204,113,0.05)', borderRadius: 4, marginBottom: 2 }}>
                           <div>
@@ -778,9 +891,7 @@ export default function HandCricket() {
                     </div>
                     {oppXI.map((p, i) => {
                       const s = oppStats[i];
-                      // Only show if they actually bowled AND are a bowler/all-rounder
                       if (!s || s.balls === 0) return null;
-                      if (p.role !== 'Bowler' && p.role !== 'All-Rounder') return null;
                       return (
                         <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 30px 30px 50px', gap: 4, padding: '5px 6px', borderRadius: 4, marginBottom: 2 }}>
                           <div style={{ fontSize: 11, color: 'var(--text-primary)' }}>{p.name}</div>
@@ -802,7 +913,25 @@ export default function HandCricket() {
             sessionStorage.removeItem('currentMatchId');
             sessionStorage.removeItem('currentMatchTeam1');
             sessionStorage.removeItem('currentMatchTeam2');
-            navigate(tournamentId ? `/tournament/${tournamentId}` : '/');
+            const isPostAuction = sessionStorage.getItem('postAuctionMode') === 'true';
+            if (isPostAuction) {
+              navigate('/post-auction-tournament');
+            } else if (tournamentId) {
+              // Check if it's pre-squad or multiplayer
+              const tournamentData = sessionStorage.getItem('tournamentData');
+              if (tournamentData) {
+                const data = JSON.parse(tournamentData);
+                if (data.mode === 'squad') {
+                  navigate(`/pre-squad-tournament/${tournamentId}`);
+                } else {
+                  navigate(`/tournament/${tournamentId}`);
+                }
+              } else {
+                navigate('/');
+              }
+            } else {
+              navigate('/');
+            }
           }} className="btn-primary" style={{ maxWidth: 280, margin: '0 auto' }}>
             Back to Tournament
           </button>
@@ -861,10 +990,31 @@ function XIPickerScreen({ myTeamId, team1Id, team2Id, team1Squad, team2Squad, on
   const mySquad = myTeamId === team1Id ? team1Squad : team2Squad;
   const myTeam = getTeamById(myTeamId);
   const [sel, setSel] = useState([]);
+  const [savedXI, setSavedXI] = useState(null);
+
+  useEffect(() => {
+    const saved = sessionStorage.getItem(`savedXI_${myTeamId}`);
+    if (saved) {
+      const indices = JSON.parse(saved);
+      setSavedXI(indices);
+      setSel(indices);
+    }
+  }, [myTeamId]);
 
   const toggle = (idx) => {
     if (sel.includes(idx)) setSel(sel.filter(i => i !== idx));
     else if (sel.length < 11) setSel([...sel, idx]);
+  };
+
+  const handleSaveXI = () => {
+    sessionStorage.setItem(`savedXI_${myTeamId}`, JSON.stringify(sel));
+    setSavedXI(sel);
+  };
+
+  const handleEditXI = () => {
+    setSel([]);
+    setSavedXI(null);
+    sessionStorage.removeItem(`savedXI_${myTeamId}`);
   };
 
   return (
@@ -877,6 +1027,18 @@ function XIPickerScreen({ myTeamId, team1Id, team2Id, team1Squad, team2Squad, on
             <span style={{ color: myTeam?.color }}>{myTeam?.short}</span> — pick 11 players
             <span style={{ marginLeft: 8, fontFamily: 'var(--font-mono)', color: sel.length === 11 ? 'var(--green)' : 'var(--gold)' }}>{sel.length}/11</span>
           </div>
+          {savedXI && (
+            <div style={{ marginTop: 8, padding: '8px 12px', background: 'rgba(46,204,113,0.08)', border: '1px solid rgba(46,204,113,0.25)', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <circle cx="7" cy="7" r="6" fill="rgba(46,204,113,0.2)" stroke="var(--green)" strokeWidth="1.2" />
+                <path d="M4.5 7l2 2 3-3" stroke="var(--green)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span style={{ fontSize: 11, color: 'var(--green)', flex: 1 }}>Saved XI loaded</span>
+              <button onClick={handleEditXI} style={{ padding: '4px 10px', background: 'transparent', border: '1px solid rgba(46,204,113,0.3)', borderRadius: 6, color: 'var(--green)', fontSize: 10, cursor: 'pointer', fontWeight: 600 }}>
+                ✏️ Edit
+              </button>
+            </div>
+          )}
         </div>
         <div style={{ maxHeight: '65vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
           {mySquad.map((p, i) => (
@@ -898,9 +1060,16 @@ function XIPickerScreen({ myTeamId, team1Id, team2Id, team1Squad, team2Squad, on
             </button>
           ))}
         </div>
-        <button onClick={() => onStart(sel.map(i => mySquad[i]))} disabled={sel.length !== 11} className="btn-primary" style={{ opacity: sel.length === 11 ? 1 : 0.4 }}>
-          Start Match
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {sel.length === 11 && !savedXI && (
+            <button onClick={handleSaveXI} className="btn-ghost" style={{ flex: 1 }}>
+              💾 Save XI for Future
+            </button>
+          )}
+          <button onClick={() => onStart(sel.map(i => mySquad[i]))} disabled={sel.length !== 11} className="btn-primary" style={{ flex: sel.length === 11 && !savedXI ? 1 : 'auto', opacity: sel.length === 11 ? 1 : 0.4 }}>
+            Start Match
+          </button>
+        </div>
       </div>
     </div>
   );

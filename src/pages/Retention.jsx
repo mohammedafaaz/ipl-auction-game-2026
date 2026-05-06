@@ -115,6 +115,16 @@ export default function Retention() {
 
         sessionStorage.setItem('soloTeamStates', JSON.stringify(states));
         sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
+        
+        // Update localStorage for recovery
+        localStorage.setItem('soloAuctionInProgress', JSON.stringify({
+          teamId: soloTeamId,
+          playerPool: JSON.stringify(updatedPool),
+          teamStates: JSON.stringify(states),
+          stage: 'auction',
+          timestamp: Date.now(),
+        }));
+        
         setConfirmed(true);
         showToast('Retentions confirmed!', 'success');
         setTimeout(() => navigate('/solo-auction'), 1200);

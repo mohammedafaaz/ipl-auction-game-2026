@@ -14,6 +14,9 @@ import SoloSetup from './pages/SoloSetup.jsx';
 import Recents from './pages/Recents.jsx';
 import TournamentSetup from './pages/TournamentSetup.jsx';
 import Tournament from './pages/Tournament.jsx';
+import PreSquadTournament from './pages/PreSquadTournament.jsx';
+import PostAuctionTournament from './pages/PostAuctionTournament.jsx';
+import MultiplayerTournamentSetup from './pages/MultiplayerTournamentSetup.jsx';
 import HandCricket from './pages/HandCricket.jsx';
 import './styles/globals.css';
 
@@ -45,6 +48,9 @@ export default function App() {
           <Route path="/solo-final" element={<FinalSquads />} />
           <Route path="/recents" element={<Recents />} />
           <Route path="/tournament-setup" element={<TournamentSetup />} />
+          <Route path="/multiplayer-tournament-setup" element={<MultiplayerTournamentSetup />} />
+          <Route path="/pre-squad-tournament/:id" element={<PreSquadTournament />} />
+          <Route path="/post-auction-tournament" element={<PostAuctionTournament />} />
           <Route path="/tournament/:id" element={<Tournament />} />
           <Route path="/hand-cricket/:tournamentId" element={<HandCricket />} />
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -46,6 +46,16 @@ export default function CreateRoom() {
       await set(ref(database, `rooms/${roomCode}`), roomData);
       sessionStorage.setItem('playerId', hostId);
       sessionStorage.setItem('roomCode', roomCode);
+      
+      // Save to localStorage for recovery
+      localStorage.setItem('multiplayerAuctionInProgress', JSON.stringify({
+        roomCode,
+        playerId: hostId,
+        playerName: playerName.trim(),
+        teamId: selectedTeam,
+        timestamp: Date.now(),
+      }));
+      
       navigate(`/lobby/${roomCode}`);
     } catch (e) {
       showToast('Failed to create room: ' + e.message, 'error');

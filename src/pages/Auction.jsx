@@ -71,6 +71,9 @@ export default function Auction() {
     if (!isSolo) return;
     clearTimeout(aiTimerRef.current);
 
+    // Clear localStorage on completion
+    localStorage.removeItem('soloAuctionInProgress');
+
     // Fill any AI team below 18 with random unsold players
     const unsold = playerPool.filter(p => !p.auctioned);
     const shuffled = [...unsold].sort(() => Math.random() - 0.5);
@@ -149,6 +152,30 @@ export default function Auction() {
       });
     }
   }, [isSolo, code, navigate, resetForPlayer, serverTimeOffset]);
+
+  // Save auction progress to localStorage periodically (solo mode)
+  useEffect(() => {
+    if (!isSolo) return;
+    
+    const saveProgress = () => {
+      const pool = sessionStorage.getItem('soloPlayerPool');
+      const states = sessionStorage.getItem('soloTeamStates');
+      
+      if (pool && states) {
+        localStorage.setItem('soloAuctionInProgress', JSON.stringify({
+          teamId: soloTeamId,
+          playerPool: pool,
+          teamStates: states,
+          stage: 'auction',
+          timestamp: Date.now(),
+        }));
+      }
+    };
+
+    // Save every 10 seconds
+    const interval = setInterval(saveProgress, 10000);
+    return () => clearInterval(interval);
+  }, [isSolo, soloTeamId]);
 
   // Sync pausedRef so AI timeout callback can read it without stale closure
   useEffect(() => { pausedRef.current = paused; }, [paused]);
@@ -560,6 +587,12 @@ export default function Auction() {
 
   const handleEndAuction = useCallback(() => {
     clearTimeout(aiTimerRef.current);
+    
+    // Clear localStorage
+    if (isSolo) {
+      localStorage.removeItem('soloAuctionInProgress');
+    }
+    
     if (isSolo) {
       sessionStorage.clear();
       navigate('/');

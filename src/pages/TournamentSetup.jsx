@@ -64,7 +64,15 @@ export default function TournamentSetup() {
       localStorage.setItem('activeTournament', JSON.stringify({ tournamentId, myTeamId: selectedTeam }));
       localStorage.setItem('tournamentData', JSON.stringify(tournamentData));
       localStorage.setItem('tournamentTeamStates', JSON.stringify(teamStates));
-      navigate(`/tournament/${tournamentId}`);
+      
+      // Save for recovery
+      localStorage.setItem('preSquadTournamentInProgress', JSON.stringify({
+        tournamentId,
+        myTeamId: selectedTeam,
+        timestamp: Date.now(),
+      }));
+      
+      navigate(`/pre-squad-tournament/${tournamentId}`);
     } catch (e) {
       showToast('Failed to start tournament: ' + e.message, 'error');
       setLoading(false);

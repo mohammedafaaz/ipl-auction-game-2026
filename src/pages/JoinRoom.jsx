@@ -51,6 +51,16 @@ export default function JoinRoom() {
       await update(ref(database), updates);
       sessionStorage.setItem('playerId', playerId);
       sessionStorage.setItem('roomCode', roomCode);
+      
+      // Save to localStorage for recovery
+      localStorage.setItem('multiplayerAuctionInProgress', JSON.stringify({
+        roomCode,
+        playerId,
+        playerName: playerName.trim(),
+        teamId: selectedTeam,
+        timestamp: Date.now(),
+      }));
+      
       navigate(`/lobby/${roomCode}`);
     } catch (e) {
       showToast('Failed to join: ' + e.message, 'error');

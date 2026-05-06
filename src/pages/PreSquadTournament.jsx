@@ -1,22 +1,20 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { database } from '../firebase.js';
-import { ref, onValue, off, update } from 'firebase/database';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { getTeamById } from '../data/teams.js';
-import { sortedTable, applyResultToTable, generatePlayoffs } from '../utils/tournament.js';
+import { sortedTable, applyResultToTable, generatePlayoffs, simulateMatch } from '../utils/tournament.js';
 import TeamBadge from '../components/TeamBadge.jsx';
 
-// MODE 3: Multiplayer Tournament (Room-based, NO simulate, sequential matches only)
-export default function Tournament() {
+// MODE 1: Pre-Squad Tournament (Default squads, simulate option, parallel matches)
+export default function PreSquadTournament() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [tournament, setTournament] = useState(null);
   const [tab, setTab] = useState('schedule');
-  const [notification, setNotification] = useState(null); // { message, type }
+  const [notification, setNotification] = useState(null);
   const notifTimerRef = useRef(null);
 
   const myTeamId = sessionStorage.getItem('tournamentTeamId');
-  const playerId = sessionStorage.getItem('playerId');
 
   const showNotif = useCallback((message, type = 'info') => {
     clearTimeout(notifTimerRef.current);
@@ -25,52 +23,23 @@ export default function Tournament() {
   }, []);
 
   useEffect(() => {
-    // MULTIPLAYER: Always load from Firebase, no local fallback
-    if (!database || !id) {
-      navigate('/');
-      return;
-    }
-    
-    const r = ref(database, `tournaments/${id}`);
-    const unsub = onValue(r, snap => {
-      if (!snap.exists()) {
-        navigate('/');
-        return;
-      }
-      const data = snap.val();
-      if (data.schedule && !Array.isArray(data.schedule)) data.schedule = Object.values(data.schedule);
+    const loadTournament = () => {
+      // Force clear state first to ensure fresh load
+      setTournament(null);
       
-      setTournament(prev => {
-        // Detect newly completed match to show notification
-        if (prev && data.schedule) {
-          const prevCompleted = (prev.schedule || []).filter(m => m.status === 'completed').length;
-          const newCompleted = data.schedule.filter(m => m.status === 'completed').length;
-          if (newCompleted > prevCompleted) {
-            const newMatch = data.schedule.find(m =>
-              m.status === 'completed' &&
-              !(prev.schedule || []).find(pm => pm.id === m.id && pm.status === 'completed')
-            );
-            if (newMatch?.result) {
-              const winner = getTeamById(newMatch.result.winner);
-              showNotif(`${winner?.short || 'Team'} won Match ${newMatch.matchNo}!`, 'success');
-            }
-          }
-          // Detect playoff advancement
-          if (data.status === 'playoffs' && prev.status === 'group') {
-            showNotif('Group stage complete! Playoffs unlocked 🏆', 'success');
-            setTab('playoffs');
-          }
-          if (data.status === 'completed' && prev.status !== 'completed') {
-            showNotif(`${getTeamById(data.champion)?.short} are IPL 2026 Champions! 🏆`, 'success');
-          }
-        }
-        return data;
-      });
-    });
-    return () => { off(r); clearTimeout(notifTimerRef.current); };
-  }, [id, showNotif, navigate]);
+      const local = sessionStorage.getItem('tournamentData');
+      if (local) {
+        const d = JSON.parse(local);
+        if (d.schedule && !Array.isArray(d.schedule)) d.schedule = Object.values(d.schedule);
+        setTournament(d);
+      }
+    };
+    
+    // Small delay to ensure navigation completes
+    const timer = setTimeout(loadTournament, 50);
+    return () => clearTimeout(timer);
+  }, [id, location.key]);
 
-  // Navigate to hand cricket for a group match
   const handlePlayMatch = useCallback((match) => {
     if (!match.team1 || !match.team2) return;
     sessionStorage.setItem('currentMatchId', String(match.matchNo - 1));
@@ -80,7 +49,41 @@ export default function Tournament() {
     navigate(`/hand-cricket/${id}`);
   }, [id, navigate]);
 
-  // Navigate to hand cricket for a playoff match
+  const handleSimulateMatch = useCallback((match) => {
+    const teamStates = JSON.parse(sessionStorage.getItem('tournamentTeamStates') || '{}');
+    const result = simulateMatch(match.team1, match.team2, teamStates);
+    
+    const updatedSchedule = tournament.schedule.map(m =>
+      m.id === match.id ? { ...m, status: 'completed', result } : m
+    );
+    
+    const updatedTable = applyResultToTable(tournament.pointsTable, result, match.team1, match.team2);
+    
+    const updatedTournament = {
+      ...tournament,
+      schedule: updatedSchedule,
+      pointsTable: updatedTable,
+    };
+
+    // Check if group stage complete
+    const allComplete = updatedSchedule.every(m => m.status === 'completed');
+    if (allComplete && tournament.status === 'group') {
+      const sorted = sortedTable(updatedTable);
+      const top4 = sorted.slice(0, 4).map(r => r.teamId);
+      updatedTournament.playoffs = generatePlayoffs(top4);
+      updatedTournament.status = 'playoffs';
+      showNotif('Group stage complete! Playoffs unlocked 🏆', 'success');
+      setTab('playoffs');
+    }
+
+    setTournament(updatedTournament);
+    sessionStorage.setItem('tournamentData', JSON.stringify(updatedTournament));
+    localStorage.setItem('tournamentData', JSON.stringify(updatedTournament));
+    
+    const winner = getTeamById(result.winner);
+    showNotif(`${winner?.short || 'Team'} won Match ${match.matchNo}!`, 'success');
+  }, [tournament, showNotif]);
+
   const handlePlayPlayoff = useCallback((stage, match) => {
     if (!match.team1 || !match.team2) return;
     sessionStorage.setItem('currentMatchId', `playoff_${stage}`);
@@ -89,6 +92,44 @@ export default function Tournament() {
     sessionStorage.setItem('playoffStage', stage);
     navigate(`/hand-cricket/${id}`);
   }, [id, navigate]);
+
+  const handleSimulatePlayoff = useCallback((stage, match) => {
+    const teamStates = JSON.parse(sessionStorage.getItem('tournamentTeamStates') || '{}');
+    const result = simulateMatch(match.team1, match.team2, teamStates);
+    
+    const updatedPlayoffs = { ...tournament.playoffs };
+    updatedPlayoffs[stage] = { ...match, status: 'completed', result };
+
+    // Advance winners
+    if (stage === 'q1') {
+      updatedPlayoffs.q2.team1 = result.winner === match.team1 ? match.team2 : match.team1;
+      updatedPlayoffs.final.team1 = result.winner;
+    } else if (stage === 'elim') {
+      updatedPlayoffs.q2.team2 = result.winner;
+    } else if (stage === 'q2') {
+      updatedPlayoffs.final.team2 = result.winner;
+    } else if (stage === 'final') {
+      const updatedTournament = {
+        ...tournament,
+        playoffs: updatedPlayoffs,
+        status: 'completed',
+        champion: result.winner,
+      };
+      setTournament(updatedTournament);
+      sessionStorage.setItem('tournamentData', JSON.stringify(updatedTournament));
+      localStorage.setItem('tournamentData', JSON.stringify(updatedTournament));
+      showNotif(`${getTeamById(result.winner)?.short} are IPL 2026 Champions! 🏆`, 'success');
+      return;
+    }
+
+    const updatedTournament = { ...tournament, playoffs: updatedPlayoffs };
+    setTournament(updatedTournament);
+    sessionStorage.setItem('tournamentData', JSON.stringify(updatedTournament));
+    localStorage.setItem('tournamentData', JSON.stringify(updatedTournament));
+    
+    const winner = getTeamById(result.winner);
+    showNotif(`${winner?.short || 'Team'} won ${stage.toUpperCase()}!`, 'success');
+  }, [tournament, showNotif]);
 
   if (!tournament) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -104,33 +145,16 @@ export default function Tournament() {
   const playoffs = tournament.playoffs;
   const isMyMatch = m => m.team1 === myTeamId || m.team2 === myTeamId;
 
-  // MULTIPLAYER MODE: Only ONE match at a time, NO simulation
-  const liveMatch = schedule.find(m => m.live);
-  const nextMatch = pending[0] || null;
-  const canPlayNext = !liveMatch && nextMatch;
+  // Find next unlocked match index - only first pending match is unlocked
+  const nextUnlockedIndex = 0;
+  const canPlayUserMatch = pending.length > 0 && isMyMatch(pending[0]);
 
-  // Playoff availability
-  const playoffAvailable = (key) => {
-    if (!playoffs) return false;
-    const m = playoffs[key];
-    if (!m || m.status !== 'pending' || !m.team1 || !m.team2) return false;
-    if (key === 'q1' || key === 'elim') return true;
-    if (key === 'q2') return playoffs.q1?.status === 'completed' && playoffs.elim?.status === 'completed';
-    if (key === 'final') return playoffs.q2?.status === 'completed';
-    return false;
-  };
-
-  const livePlayoff = playoffs && ['q1', 'elim', 'q2', 'final'].find(k => playoffs[k]?.live);
-  const canPlayPlayoff = (key) => !livePlayoff && playoffAvailable(key);
-
-  // Qualify count — top N based on team count
-  const qualifyCount = participatingTeamIds.length <= 4 ? 2 : participatingTeamIds.length <= 6 ? 3 : 4;
+  const qualifyCount = 4;
 
   return (
     <div className="page">
       <div className="page-bg-pattern" />
 
-      {/* Live notification banner */}
       {notification && (
         <div style={{
           position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)',
@@ -148,7 +172,6 @@ export default function Tournament() {
 
       <div className="container" style={{ paddingTop: 16, paddingBottom: 48 }}>
 
-        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {myTeamId && <TeamBadge teamId={myTeamId} size={32} />}
@@ -177,26 +200,14 @@ export default function Tournament() {
           </div>
         </div>
 
-        {/* Tabs */}
         <div className="tab-bar" style={{ marginBottom: 16 }}>
           {[['schedule', 'Schedule'], ['table', 'Points Table'], ['playoffs', 'Playoffs']].map(([val, label]) => (
             <button key={val} className={`tab-item ${tab === val ? 'active' : ''}`} onClick={() => setTab(val)}>{label}</button>
           ))}
         </div>
 
-        {/* ── SCHEDULE ── */}
         {tab === 'schedule' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-
-            {/* Live match banner */}
-            {liveMatch && (
-              <div style={{ padding: '10px 14px', background: 'rgba(231,76,60,0.08)', border: '1px solid rgba(231,76,60,0.3)', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div className="dot-live" style={{ background: 'var(--crimson-bright)' }} />
-                <span style={{ fontSize: 12, color: 'var(--crimson-bright)', fontWeight: 600 }}>
-                  Match in progress: {getTeamById(liveMatch.team1)?.short} vs {getTeamById(liveMatch.team2)?.short}
-                </span>
-              </div>
-            )}
 
             {pending.length > 0 && (
               <>
@@ -207,17 +218,22 @@ export default function Tournament() {
                   const t1 = getTeamById(m.team1);
                   const t2 = getTeamById(m.team2);
                   const mine = isMyMatch(m);
-                  const isNext = idx === 0 && canPlayNext;
-                  const isLocked = idx > 0 || !!liveMatch;
+                  const isUnlocked = idx === nextUnlockedIndex;
+                  const canSimulate = !mine && isUnlocked;
+                  const canPlay = mine && isUnlocked;
 
                   return (
                     <div key={m.id} style={{
                       padding: '12px 14px', background: 'var(--bg-card)',
-                      border: `1px solid ${isNext && mine ? 'rgba(212,175,55,0.35)' : 'var(--border)'}`,
-                      borderRadius: 10, opacity: isLocked ? 0.45 : 1,
+                      border: `1px solid ${mine && isUnlocked ? 'rgba(212,175,55,0.35)' : 'var(--border)'}`,
+                      borderRadius: 10,
+                      opacity: isUnlocked ? 1 : 0.4,
                     }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: isNext ? 10 : 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                         <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', minWidth: 20 }}>M{m.matchNo}</span>
+                        {!isUnlocked && (
+                          <span style={{ fontSize: 9, background: 'rgba(128,128,128,0.2)', color: 'var(--text-muted)', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>🔒 LOCKED</span>
+                        )}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
                           <TeamBadge teamId={m.team1} size={26} />
                           <span style={{ fontFamily: 'var(--font-display)', fontSize: 14, color: t1?.color }}>{t1?.short}</span>
@@ -227,18 +243,25 @@ export default function Tournament() {
                           <span style={{ fontFamily: 'var(--font-display)', fontSize: 14, color: t2?.color }}>{t2?.short}</span>
                           <TeamBadge teamId={m.team2} size={26} />
                         </div>
-                        {isLocked && (
-                          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0 }}>
-                            <rect x="3" y="6" width="8" height="7" rx="1.5" stroke="var(--text-muted)" strokeWidth="1.2"/>
-                            <path d="M5 6V4a2 2 0 0 1 4 0v2" stroke="var(--text-muted)" strokeWidth="1.2" strokeLinecap="round"/>
-                          </svg>
-                        )}
                       </div>
 
-                      {isNext && (
-                        <button className="btn-primary" style={{ padding: '8px', fontSize: 12 }} onClick={() => handlePlayMatch(m)} disabled={!mine}>
-                          {mine ? '▶ Play Match' : '⏳ Waiting for match to start'}
-                        </button>
+                      {isUnlocked && (
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          {mine ? (
+                            <button className="btn-primary" style={{ flex: 1, padding: '8px', fontSize: 12 }} onClick={() => handlePlayMatch(m)}>
+                              ▶ Play Match
+                            </button>
+                          ) : (
+                            <button className="btn-ghost" style={{ flex: 1, padding: '8px 12px', fontSize: 12, justifyContent: 'center' }} onClick={() => handleSimulateMatch(m)}>
+                              ⚡ Simulate
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {!isUnlocked && (
+                        <div style={{ fontSize: 9, color: 'var(--text-muted)', textAlign: 'center', marginTop: 6 }}>
+                          Complete previous match to unlock
+                        </div>
                       )}
                     </div>
                   );
@@ -281,16 +304,9 @@ export default function Tournament() {
                 })}
               </>
             )}
-
-            {pending.length === 0 && completed.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text-muted)', fontSize: 13 }}>
-                No matches scheduled
-              </div>
-            )}
           </div>
         )}
 
-        {/* ── POINTS TABLE ── */}
         {tab === 'table' && (
           <div>
             <div style={{ display: 'grid', gridTemplateColumns: '24px 1fr 28px 28px 28px 28px 40px 52px', gap: 4, padding: '6px 10px', marginBottom: 4 }}>
@@ -336,7 +352,6 @@ export default function Tournament() {
           </div>
         )}
 
-        {/* ── PLAYOFFS ── */}
         {tab === 'playoffs' && (
           <div>
             {tournament.status === 'group' ? (
@@ -360,20 +375,27 @@ export default function Tournament() {
                   const t2 = m.team2 ? getTeamById(m.team2) : null;
                   const mine = m.team1 === myTeamId || m.team2 === myTeamId;
                   const isPending = m.status === 'pending' && m.team1 && m.team2;
-                  const available = canPlayPlayoff(key);
+
+                  const playoffOrder = ['q1', 'elim', 'q2', 'final'];
+                  const currentIndex = playoffOrder.indexOf(key);
+                  const allPreviousComplete = currentIndex === 0 || playoffOrder.slice(0, currentIndex).every(k => playoffs[k]?.status === 'completed');
+                  const isUnlocked = allPreviousComplete && isPending;
+                  const canPlay = mine && isUnlocked;
+                  const canSimulate = !mine && isUnlocked;
 
                   return (
                     <div key={key} style={{
                       padding: '14px', background: 'var(--bg-card)',
                       border: `1px solid ${key === 'final' ? 'rgba(212,175,55,0.4)' : 'var(--border)'}`,
-                      borderRadius: 12, opacity: isPending && !available ? 0.45 : 1,
+                      borderRadius: 12,
+                      opacity: (!isUnlocked && isPending) ? 0.4 : 1,
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                         <span style={{ fontFamily: 'var(--font-display)', fontSize: 14, letterSpacing: '0.06em', color: key === 'final' ? 'var(--gold)' : 'var(--text-primary)' }}>{label}</span>
                         <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{desc}</span>
                       </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: isPending && available ? 10 : 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: isPending ? 10 : 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
                           {t1 ? <><TeamBadge teamId={m.team1} size={26} /><span style={{ fontFamily: 'var(--font-display)', fontSize: 14, color: m.result?.winner === m.team1 ? t1.color : 'var(--text-primary)' }}>{t1.short}</span></> : <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>TBD</span>}
                         </div>
@@ -390,19 +412,26 @@ export default function Tournament() {
                         </div>
                       )}
 
-                      {isPending && available && (
-                        <button className="btn-primary" style={{ padding: '8px', fontSize: 12 }} onClick={() => handlePlayPlayoff(key, m)} disabled={!mine}>
-                          {mine ? `▶ Play ${label}` : '⏳ Waiting for match to start'}
-                        </button>
-                      )}
-                      {isPending && !available && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                          <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
-                            <rect x="3" y="6" width="8" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.2"/>
-                            <path d="M5 6V4a2 2 0 0 1 4 0v2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-                          </svg>
-                          Complete previous stage to unlock
-                        </div>
+                      {isPending && (
+                        <>
+                          {isUnlocked ? (
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              {mine ? (
+                                <button className="btn-primary" style={{ flex: 1, padding: '8px', fontSize: 12 }} onClick={() => handlePlayPlayoff(key, m)}>
+                                  ▶ Play {label}
+                                </button>
+                              ) : (
+                                <button className="btn-ghost" style={{ flex: 1, padding: '8px 12px', fontSize: 12, justifyContent: 'center' }} onClick={() => handleSimulatePlayoff(key, m)}>
+                                  ⚡ Simulate
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 9, color: 'var(--text-muted)', textAlign: 'center', marginTop: 6 }}>
+                              🔒 Complete previous playoff matches first
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   );

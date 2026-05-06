@@ -68,7 +68,7 @@ export default function FinalSquads() {
     }
 
     setStartingTournament(false);
-    navigate(`/tournament/${tournamentId}`);
+    navigate(`/post-auction-tournament`);
   };
 
   useEffect(() => {
