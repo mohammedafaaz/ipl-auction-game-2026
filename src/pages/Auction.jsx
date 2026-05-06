@@ -129,13 +129,13 @@ export default function Auction() {
       return;
     }
 
-    setSkippedTeams(new Set());
     resetForPlayer(remaining[0]);
 
     // In multiplayer, next player is set by handleTimerExpire, not here
     // This prevents duplicate writes and ensures atomic transitions
     if (isSolo) {
       // Solo mode - update local state only
+      setSkippedTeams(new Set());
       return;
     }
   }, [isSolo, code, navigate, resetForPlayer]);
@@ -270,6 +270,10 @@ export default function Auction() {
         setPhase(a.phase || 'bidding');
         setSoldInfo(a.soldInfo || null);
         
+        // Sync skipped teams from Firebase
+        const firebaseSkipped = new Set(a.skippedTeams || []);
+        setSkippedTeams(firebaseSkipped);
+        
         // Sync current player from Firebase
         if (a.currentPlayerId && a.currentPlayerId !== lastSyncRef.current.currentPlayerId) {
           lastSyncRef.current.currentPlayerId = a.currentPlayerId;
@@ -277,8 +281,6 @@ export default function Auction() {
           if (p) {
             setCurrentPlayer(p);
             setScoutReady(!openRouterKey);
-            // ISSUE 2 FIX: Reset skipped teams when new player starts
-            setSkippedTeams(new Set());
           }
         } else if (!a.currentPlayerId && !currentPlayer && pool.length > 0) {
           // Initialize first player if auction state is empty
@@ -388,6 +390,7 @@ export default function Auction() {
 
   const handleSkip = useCallback(async () => {
     if (phase !== 'bidding' || !currentPlayer || !myTeamId) return;
+    if (skippedTeams.has(myTeamId)) return; // Already skipped
 
     if (isSolo) {
       clearTimeout(aiTimerRef.current);
@@ -475,28 +478,32 @@ export default function Auction() {
       
       const newSkipped = new Set(skippedTeams);
       newSkipped.add(myTeamId);
+      const newSkippedArray = Array.from(newSkipped);
+      
+      // Update Firebase with new skip state
+      await update(ref(database, `rooms/${code}/auction`), {
+        skippedTeams: newSkippedArray,
+      });
+      
       setSkippedTeams(newSkipped);
       showToast('You have skipped this player', 'info');
 
-      // Get all human player team IDs
-      const humanTeamIds = Object.values(room?.players || {}).map(p => p.teamId).filter(Boolean);
-      const allHumansSkipped = humanTeamIds.every(tid => newSkipped.has(tid));
+      // Get all human player team IDs (exclude full squads)
+      const humanTeamIds = Object.values(room?.players || {})
+        .map(p => p.teamId)
+        .filter(tid => {
+          const state = teamStates[tid];
+          return state && (state.squad?.length || 0) < 25;
+        });
+      
+      const allActiveUsersSkipped = humanTeamIds.every(tid => newSkipped.has(tid));
 
-      if (allHumansSkipped) {
-        // All humans have skipped
-        if (leadingTeam) {
-          // ISSUE 1 FIX: Someone has bid - sell immediately to highest bidder
-          const serverTime = Date.now() + serverTimeOffset;
-          await update(ref(database, `rooms/${code}/auction`), {
-            timerExpiry: serverTime - 1000, // Force immediate expiry
-          });
-        } else {
-          // ISSUE 2 FIX: No one bid - mark unsold immediately
-          const serverTime = Date.now() + serverTimeOffset;
-          await update(ref(database, `rooms/${code}/auction`), {
-            timerExpiry: serverTime - 1000, // Force immediate expiry
-          });
-        }
+      if (allActiveUsersSkipped) {
+        // All active users have decided - resolve immediately
+        const serverTime = Date.now() + serverTimeOffset;
+        await update(ref(database, `rooms/${code}/auction`), {
+          timerExpiry: serverTime - 1000, // Force immediate expiry
+        });
       }
     }
   }, [phase, currentPlayer, playerPool, teamStates, isSolo, myTeamId, myTeamState, skippedTeams, leadingTeam, currentBid, recordRecent, advanceToNext, code, room, showToast, serverTimeOffset]);
@@ -566,6 +573,7 @@ export default function Auction() {
           bidHistory: [],
           timerExpiry: remaining.length > 0 ? serverTime + TIMER_DURATION + 2000 : serverTime,
           soldInfo: null,
+          skippedTeams: [], // Reset skip state for next player
         }).then(() => {
           // Update auctionedIds after auction state is updated
           return update(ref(database, `rooms/${code}`), {
@@ -661,6 +669,7 @@ export default function Auction() {
                 timerExpiry: serverTime + TIMER_DURATION + delayTime,
                 phase: 'bidding',
                 soldInfo: null,
+                skippedTeams: [], // Reset skip state for next player
               }).then(() => {
                 timerExpireProcessingRef.current = false;
               });
