@@ -356,10 +356,7 @@ export default function HandCricket() {
     setMatchResult(result);
     setScreen('result');
 
-    const matchId = sessionStorage.getItem('currentMatchId');
     const idx = parseInt(matchId, 10);
-    const isPlayoff = matchId?.startsWith('playoff_');
-    const playoffStage = isPlayoff ? matchId.replace('playoff_', '') : null;
     
     console.log('finishMatch called - matchId:', matchId, 'idx:', idx, 'isPlayoff:', isPlayoff);
     
