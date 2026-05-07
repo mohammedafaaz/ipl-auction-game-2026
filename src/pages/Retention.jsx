@@ -69,7 +69,7 @@ export default function Retention() {
           
           update(ref(database, `rooms/${code}`), {
             status: 'auction',
-            auctionedIds: auctionedIds, // Initialize auctionedIds with retained players
+            auctionedIds: auctionedIds,
             'auction/currentPlayerId': firstPlayer?.id || null,
             'auction/currentBid': firstPlayer?.basePrice || 0,
             'auction/leadingTeam': null,
@@ -77,6 +77,7 @@ export default function Retention() {
             'auction/timerExpiry': Date.now() + 30000,
             'auction/phase': 'bidding',
             'auction/soldInfo': null,
+            'auction/skippedTeams': [],
           });
         }
       }
@@ -154,6 +155,11 @@ export default function Retention() {
           retainedIds.has(p.id) ? { ...p, auctioned: true, sold: true, retainedBy: myTeamId } : p
         );
         updates[`rooms/${code}/playerPool`] = updatedPool;
+        
+        // Initialize auctionedIds with retained players
+        const currentAuctionedIds = room.auctionedIds || [];
+        const newAuctionedIds = [...new Set([...currentAuctionedIds, ...Array.from(retainedIds)])];
+        updates[`rooms/${code}/auctionedIds`] = newAuctionedIds;
 
         await update(ref(database), updates);
         setConfirmed(true);

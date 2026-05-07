@@ -297,6 +297,7 @@ export default function Auction() {
               timerExpiry: serverTime + TIMER_DURATION,
               phase: 'bidding',
               soldInfo: null,
+              skippedTeams: [],
             });
           }
         }
@@ -314,6 +315,7 @@ export default function Auction() {
             timerExpiry: serverTime + TIMER_DURATION,
             phase: 'bidding',
             soldInfo: null,
+            skippedTeams: [],
           });
         }
       }
@@ -508,7 +510,7 @@ export default function Auction() {
     }
   }, [phase, currentPlayer, playerPool, teamStates, isSolo, myTeamId, myTeamState, skippedTeams, leadingTeam, currentBid, recordRecent, advanceToNext, code, room, showToast, serverTimeOffset]);
 
-  const handleRTM = useCallback(() => {
+  const handleRTM = useCallback(async () => {
     if (!myTeamState || !currentPlayer || phase !== 'sold') return;
     if (!canUseRTM(myTeamState, currentPlayer.id)) { showToast('Cannot use RTM on this player', 'error'); return; }
     if (soldInfo?.teamId === myTeamId) return;
@@ -526,17 +528,46 @@ export default function Auction() {
     if (isSolo) {
       sessionStorage.setItem('soloTeamStates', JSON.stringify(newStates));
       sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
+      showToast(`RTM used! ${currentPlayer.name} retained for ${formatCrore(matchPrice)}`, 'success');
+      recordRecent(currentPlayer, 'sold', myTeamId, matchPrice, bidHistoryRef.current);
+      advanceToNext(newStates, updatedPool);
     } else if (database) {
-      // Update only the specific team state to prevent stack overflow
-      update(ref(database, `rooms/${code}/teamStates/${myTeamId}`), 
+      // Multiplayer: Update Firebase and advance to next player
+      const newAuctionedIds = updatedPool.filter(p => p.auctioned).map(p => p.id);
+      const remaining = sortPlayersByPool(updatedPool.filter(p => !p.auctioned), POOLS);
+      const serverTime = Date.now() + serverTimeOffset;
+      
+      showToast(`RTM used! ${currentPlayer.name} retained for ${formatCrore(matchPrice)}`, 'success');
+      recordRecent(currentPlayer, 'sold', myTeamId, matchPrice, bidHistoryRef.current);
+      
+      // Sequential updates
+      await update(ref(database, `rooms/${code}/teamStates/${myTeamId}`), 
         sanitizeTeamStateForFirebase(newState)
       );
+      
+      await update(ref(database, `rooms/${code}`), {
+        auctionedIds: newAuctionedIds,
+      });
+      
+      // Advance to next player after delay
+      setTimeout(async () => {
+        if (remaining.length > 0) {
+          await update(ref(database, `rooms/${code}/auction`), {
+            currentPlayerId: remaining[0].id,
+            currentBid: remaining[0].basePrice,
+            leadingTeam: null,
+            bidHistory: [],
+            timerExpiry: serverTime + TIMER_DURATION + 2500,
+            phase: 'bidding',
+            soldInfo: null,
+            skippedTeams: [],
+          });
+        } else {
+          await update(ref(database, `rooms/${code}`), { status: 'ended' });
+        }
+      }, 2500);
     }
-
-    showToast(`RTM used! ${currentPlayer.name} retained for ${formatCrore(matchPrice)}`, 'success');
-    recordRecent(currentPlayer, 'sold', myTeamId, matchPrice, bidHistoryRef.current);
-    advanceToNext(newStates, updatedPool);
-  }, [myTeamState, currentPlayer, phase, soldInfo, teamStates, playerPool, isSolo, myTeamId, currentBid, showToast, recordRecent, advanceToNext, code]);
+  }, [myTeamState, currentPlayer, phase, soldInfo, teamStates, playerPool, isSolo, myTeamId, currentBid, showToast, recordRecent, advanceToNext, code, serverTimeOffset]);
 
   const isHost = !isSolo && room?.players?.[playerId]?.isHost;
 
@@ -544,7 +575,14 @@ export default function Auction() {
     if (phase !== 'bidding') return;
     
     // CRITICAL: Prevent multiple users from writing simultaneously
-    if (!isSolo && timerExpireProcessingRef.current) return;
+    if (!isSolo && timerExpireProcessingRef.current) {
+      console.log('Timer expire already processing, skipping');
+      return;
+    }
+    if (!isSolo && !isHostRef.current) {
+      console.log('Not host, skipping timer expire');
+      return; // Only host processes timer expiry
+    }
     timerExpireProcessingRef.current = true;
     
     clearTimeout(aiTimerRef.current);
