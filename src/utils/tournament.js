@@ -130,10 +130,10 @@ export function sortedTable(table) {
 // ── Generate playoff bracket from top 4 ──────────────────────────────────────
 export function generatePlayoffs(top4) {
   return {
-    q1: { team1: top4[0], team2: top4[1], status: 'pending', result: null },       // winner → Final
-    elim: { team1: top4[2], team2: top4[3], status: 'pending', result: null },     // winner → Q2
-    q2: { team1: null, team2: null, status: 'pending', result: null },             // loser Q1 vs winner Elim → Final
-    final: { team1: null, team2: null, status: 'pending', result: null },
+    q1: { team1: top4[0], team2: top4[1], status: 'pending', result: null },       // 1st vs 2nd → winner to Final
+    elim: { team1: top4[2], team2: top4[3], status: 'pending', result: null },     // 3rd vs 4th → winner to Q2
+    q2: { team1: null, team2: null, status: 'pending', result: null },             // Q1 loser vs Elim winner → winner to Final
+    final: { team1: null, team2: null, status: 'pending', result: null },          // Q1 winner vs Q2 winner
   };
 }
 

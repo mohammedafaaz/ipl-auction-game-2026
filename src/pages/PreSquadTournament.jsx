@@ -95,20 +95,39 @@ export default function PreSquadTournament() {
 
   const handleSimulatePlayoff = useCallback((stage, match) => {
     const teamStates = JSON.parse(sessionStorage.getItem('tournamentTeamStates') || '{}');
-    const result = simulateMatch(match.team1, match.team2, teamStates);
+    let result = simulateMatch(match.team1, match.team2, teamStates);
+    
+    // PLAYOFF TIE HANDLING: If tie, rematch until there's a winner
+    let attempts = 0;
+    while (!result.winner && attempts < 10) {
+      result = simulateMatch(match.team1, match.team2, teamStates);
+      attempts++;
+    }
+    // Fallback: if still tied after 10 attempts, pick random winner
+    if (!result.winner) {
+      result.winner = Math.random() < 0.5 ? match.team1 : match.team2;
+    }
     
     const updatedPlayoffs = { ...tournament.playoffs };
     updatedPlayoffs[stage] = { ...match, status: 'completed', result };
 
-    // Advance winners
+    // Advance winners based on correct IPL playoff structure
     if (stage === 'q1') {
-      updatedPlayoffs.q2.team1 = result.winner === match.team1 ? match.team2 : match.team1;
+      // Q1: 1st vs 2nd
+      // Winner goes to Final
+      // Loser goes to Q2
       updatedPlayoffs.final.team1 = result.winner;
+      updatedPlayoffs.q2.team1 = result.winner === match.team1 ? match.team2 : match.team1;
     } else if (stage === 'elim') {
+      // Eliminator: 3rd vs 4th
+      // Winner goes to Q2
       updatedPlayoffs.q2.team2 = result.winner;
     } else if (stage === 'q2') {
+      // Q2: Q1 loser vs Elim winner
+      // Winner goes to Final
       updatedPlayoffs.final.team2 = result.winner;
     } else if (stage === 'final') {
+      // Final: Q1 winner vs Q2 winner
       const updatedTournament = {
         ...tournament,
         playoffs: updatedPlayoffs,
@@ -364,10 +383,10 @@ export default function PreSquadTournament() {
             ) : playoffs ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {[
-                  { key: 'q1', label: 'Qualifier 1', desc: 'Winner → Final' },
-                  { key: 'elim', label: 'Eliminator', desc: 'Winner → Q2' },
-                  { key: 'q2', label: 'Qualifier 2', desc: 'Winner → Final' },
-                  { key: 'final', label: '🏆 Final', desc: 'IPL 2026 Champion' },
+                  { key: 'q1', label: 'Qualifier 1', desc: '1st vs 2nd' },
+                  { key: 'elim', label: 'Eliminator', desc: '3rd vs 4th' },
+                  { key: 'q2', label: 'Qualifier 2', desc: 'Q1 Loser vs Elim Winner' },
+                  { key: 'final', label: '🏆 Final', desc: 'Q1 Winner vs Q2 Winner' },
                 ].map(({ key, label, desc }) => {
                   const m = playoffs[key];
                   if (!m) return null;

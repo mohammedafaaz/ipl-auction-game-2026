@@ -291,8 +291,19 @@ export default function Home() {
                 Continue your tournament or start fresh?
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <button className="btn-primary" onClick={handleResumeTournament}>▶ Continue</button>
-                <button className="btn-ghost" style={{ justifyContent: 'center', color: 'var(--crimson-bright)', borderColor: 'rgba(192,57,43,0.3)' }} onClick={handleRestartTournament}>🔄 Start New</button>
+                <button className="btn-primary" onClick={handleResumeTournament}>
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ marginRight: 6 }}>
+                    <path d="M3 2.5l8 4.5-8 4.5V2.5z" fill="currentColor"/>
+                  </svg>
+                  Continue
+                </button>
+                <button className="btn-ghost" style={{ justifyContent: 'center', color: 'var(--crimson-bright)', borderColor: 'rgba(192,57,43,0.3)' }} onClick={handleRestartTournament}>
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ marginRight: 6 }}>
+                    <path d="M2 7c0-2.76 2.24-5 5-5s5 2.24 5 5-2.24 5-5 5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+                    <path d="M2 4v3h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  Start New
+                </button>
               </div>
             </div>
           </div>
@@ -315,8 +326,19 @@ export default function Home() {
                 Continue your auction or start fresh?
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <button className="btn-primary" onClick={handleResumeSoloAuction}>▶ Continue</button>
-                <button className="btn-ghost" style={{ justifyContent: 'center', color: 'var(--crimson-bright)', borderColor: 'rgba(192,57,43,0.3)' }} onClick={handleStartNewSoloAuction}>🔄 Start New</button>
+                <button className="btn-primary" onClick={handleResumeSoloAuction}>
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ marginRight: 6 }}>
+                    <path d="M3 2.5l8 4.5-8 4.5V2.5z" fill="currentColor"/>
+                  </svg>
+                  Continue
+                </button>
+                <button className="btn-ghost" style={{ justifyContent: 'center', color: 'var(--crimson-bright)', borderColor: 'rgba(192,57,43,0.3)' }} onClick={handleStartNewSoloAuction}>
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ marginRight: 6 }}>
+                    <path d="M2 7c0-2.76 2.24-5 5-5s5 2.24 5 5-2.24 5-5 5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+                    <path d="M2 4v3h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  Start New
+                </button>
               </div>
             </div>
           </div>
@@ -339,8 +361,19 @@ export default function Home() {
                 Rejoin your room or start fresh?
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <button className="btn-primary" onClick={handleResumeMultiplayerAuction}>▶ Rejoin</button>
-                <button className="btn-ghost" style={{ justifyContent: 'center', color: 'var(--crimson-bright)', borderColor: 'rgba(192,57,43,0.3)' }} onClick={handleStartNewMultiplayerAuction}>🔄 Start New</button>
+                <button className="btn-primary" onClick={handleResumeMultiplayerAuction}>
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ marginRight: 6 }}>
+                    <path d="M3 2.5l8 4.5-8 4.5V2.5z" fill="currentColor"/>
+                  </svg>
+                  Rejoin
+                </button>
+                <button className="btn-ghost" style={{ justifyContent: 'center', color: 'var(--crimson-bright)', borderColor: 'rgba(192,57,43,0.3)' }} onClick={handleStartNewMultiplayerAuction}>
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ marginRight: 6 }}>
+                    <path d="M2 7c0-2.76 2.24-5 5-5s5 2.24 5 5-2.24 5-5 5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+                    <path d="M2 4v3h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  Start New
+                </button>
               </div>
             </div>
           </div>

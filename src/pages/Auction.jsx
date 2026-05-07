@@ -48,6 +48,7 @@ export default function Auction() {
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [showEndSaveConfirm, setShowEndSaveConfirm] = useState(false);
   const [showSquadFullModal, setShowSquadFullModal] = useState(false);
   const [recentPlayers, setRecentPlayers] = useState([]);
   const [skipLoading, setSkipLoading] = useState(false);
@@ -66,6 +67,30 @@ export default function Auction() {
   const myTeamState = teamStates[myTeamId];
   const squadFull = (myTeamState?.squad?.length ?? 0) >= 25;
   const squadReady = isSolo && (myTeamState?.squad?.length ?? 0) >= 18;
+
+  const handleEndAndSave = useCallback(() => {
+    const pool = sessionStorage.getItem('soloPlayerPool');
+    const states = sessionStorage.getItem('soloTeamStates');
+    
+    if (pool && states) {
+      localStorage.setItem('soloAuctionInProgress', JSON.stringify({
+        teamId: soloTeamId,
+        playerPool: pool,
+        teamStates: states,
+        stage: 'auction',
+        timestamp: Date.now(),
+      }));
+    }
+    
+    sessionStorage.clear();
+    navigate('/');
+  }, [soloTeamId, navigate]);
+
+  const handleEndWithoutSave = useCallback(() => {
+    localStorage.removeItem('soloAuctionInProgress');
+    sessionStorage.clear();
+    navigate('/');
+  }, [navigate]);
 
   const handleFinishAuction = useCallback(() => {
     if (!isSolo) return;
@@ -741,14 +766,9 @@ export default function Auction() {
   const handleEndAuction = useCallback(() => {
     clearTimeout(aiTimerRef.current);
     
-    // Clear localStorage
     if (isSolo) {
-      localStorage.removeItem('soloAuctionInProgress');
-    }
-    
-    if (isSolo) {
-      sessionStorage.clear();
-      navigate('/');
+      setShowEndConfirm(false);
+      setShowEndSaveConfirm(true);
     } else if (database) {
       update(ref(database, `rooms/${code}`), { status: 'ended' });
       navigate('/');
@@ -979,7 +999,13 @@ export default function Auction() {
               )}
               {phase === 'bidding' && squadFull && (
                 <div style={{ textAlign: 'center', padding: '8px 12px', background: 'rgba(212,175,55,0.06)', border: '1px solid rgba(212,175,55,0.15)', borderRadius: 8, fontSize: 12, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-                  👁 Squad full — watching auction
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 4 }}>
+                    <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.2"/>
+                    <circle cx="5" cy="6" r="0.8" fill="currentColor"/>
+                    <circle cx="9" cy="6" r="0.8" fill="currentColor"/>
+                    <path d="M5 9c.5.5 1.5.5 2 0s1.5-.5 2 0" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                  </svg>
+                  Squad full — watching auction
                 </div>
               )}
               {canRTMNow && (
@@ -1059,7 +1085,13 @@ export default function Auction() {
                 style={{ flex: 1, justifyContent: 'center' }}
                 onClick={() => setShowSquadFullModal(false)}
               >
-                👁 Watch Auction
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ marginRight: 6 }}>
+                  <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.2"/>
+                  <circle cx="5" cy="6" r="0.8" fill="currentColor"/>
+                  <circle cx="9" cy="6" r="0.8" fill="currentColor"/>
+                  <path d="M5 9c.5.5 1.5.5 2 0s1.5-.5 2 0" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                </svg>
+                Watch Auction
               </button>
               <button
                 className="btn-primary"
@@ -1074,7 +1106,11 @@ export default function Auction() {
                   }
                 }}
               >
-                🏏 View My Squad
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ marginRight: 6 }}>
+                  <circle cx="7" cy="5" r="2" stroke="currentColor" strokeWidth="1.2"/>
+                  <path d="M2 12c0-2.5 2-4 5-4s5 1.5 5 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                </svg>
+                View My Squad
               </button>
             </div>
           </div>
@@ -1113,6 +1149,52 @@ export default function Auction() {
                 onClick={handleEndAuction}
               >
                 End Auction
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* End and Save Confirm Dialog (Solo) */}
+      {showEndSaveConfirm && (
+        <div className="overlay overlay-center" onClick={() => setShowEndSaveConfirm(false)}>
+          <div className="modal modal-center" style={{ maxWidth: 340 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(212,175,55,0.12)', border: '1px solid rgba(212,175,55,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M8 3v5M8 11v1" stroke="var(--gold)" strokeWidth="1.8" strokeLinecap="round"/>
+                  <circle cx="8" cy="8" r="6.5" stroke="var(--gold)" strokeWidth="1.3"/>
+                </svg>
+              </div>
+              <div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, letterSpacing: '0.06em', color: 'var(--text-primary)', lineHeight: 1 }}>Save Progress?</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>You can resume later</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+              <button
+                className="btn-primary"
+                onClick={handleEndAndSave}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ marginRight: 6 }}>
+                  <path d="M2 2v10h10V5L9 2H2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+                  <path d="M4 2v3h5V2M7 8v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+                </svg>
+                Save & Exit
+              </button>
+              <button
+                className="btn-ghost"
+                style={{ justifyContent: 'center', color: 'var(--crimson-bright)', borderColor: 'rgba(192,57,43,0.3)' }}
+                onClick={handleEndWithoutSave}
+              >
+                Exit Without Saving
+              </button>
+              <button
+                className="btn-ghost"
+                style={{ justifyContent: 'center' }}
+                onClick={() => setShowEndSaveConfirm(false)}
+              >
+                Cancel
               </button>
             </div>
           </div>

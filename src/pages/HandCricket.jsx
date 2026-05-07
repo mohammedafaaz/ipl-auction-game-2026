@@ -305,6 +305,54 @@ export default function HandCricket() {
     const finalPlayerStats = playerStatsRef.current;
     const result = { winner, score1: t1Runs, wickets1: t1Wkts, overs1: OVERS, balls1: OVERS * 6, score2: t2Runs, wickets2: t2Wkts, overs2: OVERS, balls2, chaseWin, wicketsRemaining, playerStats: finalPlayerStats };
 
+    const matchId = sessionStorage.getItem('currentMatchId');
+    const isPlayoff = matchId?.startsWith('playoff_');
+    const playoffStage = isPlayoff ? matchId.replace('playoff_', '') : null;
+    
+    // PLAYOFF TIE HANDLING: If playoff match is tied, rematch immediately
+    if (isPlayoff && !winner) {
+      // Show tie screen briefly, then rematch
+      setMatchResult(result);
+      setScreen('result');
+      
+      setTimeout(() => {
+        // Reset match state for rematch
+        setScreen('toss');
+        setTossPhase('coin');
+        setTossResult(null);
+        setUserWonToss(false);
+        setTossAnimating(false);
+        setBattingTeamId(null);
+        setBowlingTeamId(null);
+        setScores({ [team1Id]: { runs: 0, wickets: 0 }, [team2Id]: { runs: 0, wickets: 0 } });
+        scoresRef.current = { [team1Id]: { runs: 0, wickets: 0 }, [team2Id]: { runs: 0, wickets: 0 } };
+        setPlayerStats({ [team1Id]: {}, [team2Id]: {} });
+        playerStatsRef.current = { [team1Id]: {}, [team2Id]: {} };
+        setActiveBatterXIIdx(0);
+        setActiveBowlerXIIdx(0);
+        activeBatterRef.current = 0;
+        activeBowlerRef.current = 0;
+        setDismissedBatters(new Set());
+        dismissedRef.current = new Set();
+        setLastBowlerXIIdx(-1);
+        lastBowlerRef.current = -1;
+        setCurrentOverBowlerIdx(-1);
+        currentOverBowlerRef.current = -1;
+        setPendingPick(null);
+        setInning(1);
+        inningRef.current = 1;
+        setBallCount(0);
+        ballCountRef.current = 0;
+        setLastUser(null);
+        setLastAI(null);
+        setLastOut(false);
+        setLastRuns(0);
+        setMatchResult(null);
+        transitioning.current = false;
+      }, 3000);
+      return;
+    }
+
     setMatchResult(result);
     setScreen('result');
 
@@ -824,8 +872,13 @@ export default function HandCricket() {
         {isWin && <ConfettiOverlay />}
         <div className="container" style={{ paddingTop: 32, paddingBottom: 48, position: 'relative', zIndex: 1, textAlign: 'center' }}>
           <div className={isWin ? 'sold-stamp' : 'unsold-stamp'} style={{ fontSize: 48, marginBottom: 8 }}>
-            {isTie ? 'TIE' : isWin ? 'WIN! 🏆' : 'LOSS'}
+            {isTie ? 'TIE - REMATCH!' : isWin ? 'WIN! 🏆' : 'LOSS'}
           </div>
+          {isTie && (
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, color: 'var(--gold)', letterSpacing: '0.1em', marginBottom: 20 }}>
+              PLAYOFF REMATCH IN 3 SECONDS...
+            </div>
+          )}
           {isWin && (
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, color: 'var(--gold)', letterSpacing: '0.1em', marginBottom: 20 }}>
               CONGRATULATIONS!

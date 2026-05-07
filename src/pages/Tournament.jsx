@@ -349,10 +349,10 @@ export default function Tournament() {
             ) : playoffs ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {[
-                  { key: 'q1', label: 'Qualifier 1', desc: 'Winner → Final' },
-                  { key: 'elim', label: 'Eliminator', desc: 'Winner → Q2' },
-                  { key: 'q2', label: 'Qualifier 2', desc: 'Winner → Final' },
-                  { key: 'final', label: '🏆 Final', desc: 'IPL 2026 Champion' },
+                  { key: 'q1', label: 'Qualifier 1', desc: '1st vs 2nd' },
+                  { key: 'elim', label: 'Eliminator', desc: '3rd vs 4th' },
+                  { key: 'q2', label: 'Qualifier 2', desc: 'Q1 Loser vs Elim Winner' },
+                  { key: 'final', label: '🏆 Final', desc: 'Q1 Winner vs Q2 Winner' },
                 ].map(({ key, label, desc }) => {
                   const m = playoffs[key];
                   if (!m) return null;

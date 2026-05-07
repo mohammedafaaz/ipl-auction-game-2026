@@ -114,14 +114,20 @@ export default function PostAuctionTournament() {
   }, [navigate]);
 
   const handleSimulatePlayoff = useCallback((stage, match) => {
-    const result = simulateMatch(match.team1, match.team2, tournament.teamStates);
+    let result = simulateMatch(match.team1, match.team2, tournament.teamStates);
+    let attempts = 1;
+    while (!result.winner && attempts < 10) {
+      result = simulateMatch(match.team1, match.team2, tournament.teamStates);
+      attempts++;
+    }
+    if (!result.winner) result.winner = Math.random() < 0.5 ? match.team1 : match.team2;
     
     const updatedPlayoffs = { ...tournament.playoffs };
     updatedPlayoffs[stage] = { ...match, status: 'completed', result };
 
     if (stage === 'q1') {
-      updatedPlayoffs.q2.team1 = result.winner === match.team1 ? match.team2 : match.team1;
       updatedPlayoffs.final.team1 = result.winner;
+      updatedPlayoffs.q2.team1 = result.winner === match.team1 ? match.team2 : match.team1;
     } else if (stage === 'elim') {
       updatedPlayoffs.q2.team2 = result.winner;
     } else if (stage === 'q2') {
@@ -380,10 +386,10 @@ export default function PostAuctionTournament() {
             ) : playoffs ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {[
-                  { key: 'q1', label: 'Qualifier 1', desc: 'Winner → Final' },
-                  { key: 'elim', label: 'Eliminator', desc: 'Winner → Q2' },
-                  { key: 'q2', label: 'Qualifier 2', desc: 'Winner → Final' },
-                  { key: 'final', label: '🏆 Final', desc: 'IPL 2026 Champion' },
+                  { key: 'q1', label: 'Qualifier 1', desc: '1st vs 2nd' },
+                  { key: 'elim', label: 'Eliminator', desc: '3rd vs 4th' },
+                  { key: 'q2', label: 'Qualifier 2', desc: 'Q1 Loser vs Elim Winner' },
+                  { key: 'final', label: '🏆 Final', desc: 'Q1 Winner vs Q2 Winner' },
                 ].map(({ key, label, desc }) => {
                   const m = playoffs[key];
                   if (!m) return null;
