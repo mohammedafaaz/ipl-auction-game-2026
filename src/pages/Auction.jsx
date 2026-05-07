@@ -242,6 +242,8 @@ export default function Auction() {
   const lastSyncRef = useRef({ auctionedIds: null, currentPlayerId: null });
   const isHostRef = useRef(false);
   const timerExpireProcessingRef = useRef(false);
+  const processedRoundRef = useRef(null); // Track which player round was processed
+  const lockTimeoutRef = useRef(null); // Failsafe unlock timer
 
   // Sync server time offset on mount
   useEffect(() => {
@@ -596,38 +598,92 @@ export default function Auction() {
 
   const isHost = !isSolo && room?.players?.[playerId]?.isHost;
 
-  const handleTimerExpire = useCallback(() => {
-    if (phase !== 'bidding') return;
+  // Single lock release function - called in .finally() of all async operations
+  const releaseLock = useCallback(() => {
+    timerExpireProcessingRef.current = false;
+    if (lockTimeoutRef.current) {
+      clearTimeout(lockTimeoutRef.current);
+      lockTimeoutRef.current = null;
+    }
+  }, []);
+
+  // Failsafe: auto-unlock after 5 seconds to prevent permanent deadlock
+  const engageLock = useCallback((roundId) => {
+    timerExpireProcessingRef.current = true;
+    processedRoundRef.current = roundId;
     
-    // CRITICAL: Prevent multiple users from writing simultaneously
-    if (!isSolo && timerExpireProcessingRef.current) {
-      console.log('Timer expire already processing, skipping');
+    // Clear any existing timeout
+    if (lockTimeoutRef.current) {
+      clearTimeout(lockTimeoutRef.current);
+    }
+    
+    // Failsafe unlock after 5 seconds
+    lockTimeoutRef.current = setTimeout(() => {
+      console.warn('⚠️ Failsafe unlock triggered after 5s');
+      releaseLock();
+    }, 5000);
+  }, [releaseLock]);
+
+  const handleTimerExpire = useCallback(() => {
+    // ═══════════════════════════════════════════════════════════════
+    // CRITICAL GUARDS - Must pass ALL checks before processing
+    // ═══════════════════════════════════════════════════════════════
+    
+    // Guard 1: Only process during bidding phase
+    if (phase !== 'bidding') {
+      console.log('❌ Timer expire ignored: phase is not bidding');
       return;
     }
+    
+    // Guard 2: Only host processes in multiplayer
     if (!isSolo && !isHostRef.current) {
-      console.log('Not host, skipping timer expire');
-      return; // Only host processes timer expiry
+      console.log('❌ Timer expire ignored: not host');
+      return;
     }
-    timerExpireProcessingRef.current = true;
+    
+    // Guard 3: Check if already processing
+    if (timerExpireProcessingRef.current) {
+      console.log('❌ Timer expire ignored: already processing');
+      return;
+    }
+    
+    // Guard 4: Check if this round was already processed
+    const roundId = currentPlayer?.id;
+    if (!roundId) {
+      console.log('❌ Timer expire ignored: no current player');
+      return;
+    }
+    
+    if (processedRoundRef.current === roundId) {
+      console.log('❌ Timer expire ignored: round already processed for', roundId);
+      return;
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // ALL GUARDS PASSED - Engage lock and process
+    // ═══════════════════════════════════════════════════════════════
+    
+    console.log('✅ Processing timer expire for player:', roundId);
+    engageLock(roundId);
     
     clearTimeout(aiTimerRef.current);
-
     const capturedHistory = bidHistoryRef.current;
 
+    // ═══════════════════════════════════════════════════════════════
+    // CASE 1: NO BIDS - UNSOLD
+    // ═══════════════════════════════════════════════════════════════
     if (!leadingTeam) {
-      // No bids - mark as UNSOLD
       playUnsoldSound();
       recordRecent(currentPlayer, 'unsold', null, null, capturedHistory);
       
       if (!isSolo && database) {
-        // Mark player as auctioned and advance to next
+        // Multiplayer: Update Firebase atomically
         const updatedPool = playerPool.map(p => p.id === currentPlayer?.id ? { ...p, auctioned: true } : p);
         const newAuctionedIds = updatedPool.filter(p => p.auctioned).map(p => p.id);
         const remaining = sortPlayersByPool(updatedPool.filter(p => !p.auctioned), POOLS);
-        
         const serverTime = Date.now() + serverTimeOffset;
         
-        // Single atomic update to prevent race conditions
+        // Step 1: Mark as unsold and set next player info
         update(ref(database, `rooms/${code}/auction`), {
           phase: 'unsold',
           currentPlayerId: remaining.length > 0 ? remaining[0].id : null,
@@ -636,132 +692,158 @@ export default function Auction() {
           bidHistory: [],
           timerExpiry: remaining.length > 0 ? serverTime + TIMER_DURATION + 2000 : serverTime,
           soldInfo: null,
-          skippedTeams: [], // Reset skip state for next player
-        }).then(() => {
-          // Update auctionedIds after auction state is updated
+          skippedTeams: [], // Reset for next player
+        })
+        .then(() => {
+          // Step 2: Update auctionedIds
           return update(ref(database, `rooms/${code}`), {
             auctionedIds: newAuctionedIds,
           });
-        }).then(() => {
+        })
+        .then(() => {
+          // Step 3: Transition to bidding after delay
           if (remaining.length > 0) {
-            // Transition back to bidding after 2 seconds
             setTimeout(() => {
-              update(ref(database, `rooms/${code}/auction`), { phase: 'bidding' });
-              timerExpireProcessingRef.current = false;
+              update(ref(database, `rooms/${code}/auction`), { phase: 'bidding' })
+                .finally(() => {
+                  releaseLock();
+                  processedRoundRef.current = null; // Ready for next round
+                });
             }, 2000);
           } else {
             // Auction complete
-            update(ref(database, `rooms/${code}`), { status: 'ended' });
-            timerExpireProcessingRef.current = false;
+            update(ref(database, `rooms/${code}`), { status: 'ended' })
+              .finally(() => {
+                releaseLock();
+                processedRoundRef.current = null;
+              });
           }
-        }).catch(err => {
-          console.error('Timer expire update failed:', err);
-          timerExpireProcessingRef.current = false;
+        })
+        .catch(err => {
+          console.error('❌ Timer expire update failed:', err);
+          releaseLock();
         });
       } else {
+        // Solo mode
         setPhase('unsold');
         setTimeout(() => {
           const updatedPool = playerPool.map(p => p.id === currentPlayer?.id ? { ...p, auctioned: true } : p);
           setPlayerPool(updatedPool);
           sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
           advanceToNext(teamStates, updatedPool);
-          timerExpireProcessingRef.current = false;
+          releaseLock();
+          processedRoundRef.current = null;
         }, 2000);
       }
-    } else {
-      // Player SOLD to highest bidder
-      const winner = leadingTeam;
-      const price = currentBid;
-      playGavelSound();
-      if (winner === myTeamId) playFanfare();
-      else playCrowdCheer();
-
-      const newState = applyBidWin(teamStates[winner], currentPlayer, price);
-      const newStates = { ...teamStates, [winner]: newState };
-      setTeamStates(newStates);
-
-      const updatedPool = playerPool.map(p => p.id === currentPlayer.id ? { ...p, auctioned: true } : p);
-      setPlayerPool(updatedPool);
-
-      if (isSolo) {
-        sessionStorage.setItem('soloTeamStates', JSON.stringify(newStates));
-        sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
-        setSoldInfo({ teamId: winner, price });
-        setPhase('sold');
-        timerExpireProcessingRef.current = false;
-      } else if (database) {
-        const newAuctionedIds = updatedPool.filter(p => p.auctioned).map(p => p.id);
-        const remaining = sortPlayersByPool(updatedPool.filter(p => !p.auctioned), POOLS);
-        const serverTime = Date.now() + serverTimeOffset;
-        
-        // Check if winner can use RTM
-        const canRTM = Object.values(room?.players || {}).some(p => {
-          const pTeamId = p.teamId;
-          if (pTeamId === winner) return false;
-          const pState = newStates[pTeamId];
-          return pState && canUseRTM(pState, currentPlayer.id) && canBid(pState, price);
-        });
-        
-        const delayTime = canRTM ? 8000 : 2500;
-        
-        // Sequential updates with promises to prevent stack overflow
-        update(ref(database, `rooms/${code}/auction`), {
-          phase: 'sold',
-          soldInfo: { teamId: winner, price },
-          currentBid: price,
-          leadingTeam: winner,
-        }).then(() => {
-          // Update winning team state
-          return update(ref(database, `rooms/${code}/teamStates/${winner}`), 
-            sanitizeTeamStateForFirebase(newState)
-          );
-        }).then(() => {
-          // Update auctionedIds
-          return update(ref(database, `rooms/${code}`), {
-            auctionedIds: newAuctionedIds,
-          });
-        }).then(() => {
-          // Set up next player after delay
-          if (remaining.length > 0) {
-            setTimeout(() => {
-              update(ref(database, `rooms/${code}/auction`), {
-                currentPlayerId: remaining[0].id,
-                currentBid: remaining[0].basePrice,
-                leadingTeam: null,
-                bidHistory: [],
-                timerExpiry: serverTime + TIMER_DURATION + delayTime,
-                phase: 'bidding',
-                soldInfo: null,
-                skippedTeams: [], // Reset skip state for next player
-              }).then(() => {
-                timerExpireProcessingRef.current = false;
-              });
-            }, delayTime);
-          } else {
-            // Auction complete
-            setTimeout(() => {
-              update(ref(database, `rooms/${code}`), { status: 'ended' }).then(() => {
-                timerExpireProcessingRef.current = false;
-              });
-            }, delayTime);
-          }
-        }).catch(err => {
-          console.error('Timer expire update failed:', err);
-          timerExpireProcessingRef.current = false;
-        });
-      } else {
-        setSoldInfo({ teamId: winner, price });
-        setPhase('sold');
-        timerExpireProcessingRef.current = false;
-      }
-
-      recordRecent(currentPlayer, 'sold', winner, price, capturedHistory);
-      const canRTM = winner !== myTeamId && myTeamState && canUseRTM(myTeamState, currentPlayer.id) && canBid(myTeamState, price);
-      if (isSolo) {
-        setTimeout(() => advanceToNext(newStates, updatedPool), canRTM ? 8000 : 2500);
-      }
+      return;
     }
-  }, [phase, leadingTeam, currentBid, currentPlayer, teamStates, playerPool, isSolo, myTeamState, myTeamId, recordRecent, advanceToNext, code, serverTimeOffset, room]);
+
+    // ═══════════════════════════════════════════════════════════════
+    // CASE 2: HAS BIDS - SOLD
+    // ═══════════════════════════════════════════════════════════════
+    const winner = leadingTeam;
+    const price = currentBid;
+    playGavelSound();
+    if (winner === myTeamId) playFanfare();
+    else playCrowdCheer();
+
+    const newState = applyBidWin(teamStates[winner], currentPlayer, price);
+    const newStates = { ...teamStates, [winner]: newState };
+    setTeamStates(newStates);
+
+    const updatedPool = playerPool.map(p => p.id === currentPlayer.id ? { ...p, auctioned: true } : p);
+    setPlayerPool(updatedPool);
+
+    if (isSolo) {
+      sessionStorage.setItem('soloTeamStates', JSON.stringify(newStates));
+      sessionStorage.setItem('soloPlayerPool', JSON.stringify(updatedPool));
+      setSoldInfo({ teamId: winner, price });
+      setPhase('sold');
+      releaseLock();
+      processedRoundRef.current = null;
+    } else if (database) {
+      const newAuctionedIds = updatedPool.filter(p => p.auctioned).map(p => p.id);
+      const remaining = sortPlayersByPool(updatedPool.filter(p => !p.auctioned), POOLS);
+      const serverTime = Date.now() + serverTimeOffset;
+      
+      // Check if anyone can use RTM
+      const canRTM = Object.values(room?.players || {}).some(p => {
+        const pTeamId = p.teamId;
+        if (pTeamId === winner) return false;
+        const pState = newStates[pTeamId];
+        return pState && canUseRTM(pState, currentPlayer.id) && canBid(pState, price);
+      });
+      
+      const delayTime = canRTM ? 8000 : 2500;
+      
+      // Step 1: Mark as sold
+      update(ref(database, `rooms/${code}/auction`), {
+        phase: 'sold',
+        soldInfo: { teamId: winner, price },
+        currentBid: price,
+        leadingTeam: winner,
+      })
+      .then(() => {
+        // Step 2: Update winning team state
+        return update(ref(database, `rooms/${code}/teamStates/${winner}`), 
+          sanitizeTeamStateForFirebase(newState)
+        );
+      })
+      .then(() => {
+        // Step 3: Update auctionedIds
+        return update(ref(database, `rooms/${code}`), {
+          auctionedIds: newAuctionedIds,
+        });
+      })
+      .then(() => {
+        // Step 4: Advance to next player after delay
+        if (remaining.length > 0) {
+          setTimeout(() => {
+            update(ref(database, `rooms/${code}/auction`), {
+              currentPlayerId: remaining[0].id,
+              currentBid: remaining[0].basePrice,
+              leadingTeam: null,
+              bidHistory: [],
+              timerExpiry: serverTime + TIMER_DURATION + delayTime,
+              phase: 'bidding',
+              soldInfo: null,
+              skippedTeams: [], // Reset for next player
+            })
+            .finally(() => {
+              releaseLock();
+              processedRoundRef.current = null; // Ready for next round
+            });
+          }, delayTime);
+        } else {
+          // Auction complete
+          setTimeout(() => {
+            update(ref(database, `rooms/${code}`), { status: 'ended' })
+              .finally(() => {
+                releaseLock();
+                processedRoundRef.current = null;
+              });
+          }, delayTime);
+        }
+      })
+      .catch(err => {
+        console.error('❌ Timer expire update failed:', err);
+        releaseLock();
+      });
+    } else {
+      setSoldInfo({ teamId: winner, price });
+      setPhase('sold');
+      releaseLock();
+      processedRoundRef.current = null;
+    }
+
+    recordRecent(currentPlayer, 'sold', winner, price, capturedHistory);
+    const canRTM = winner !== myTeamId && myTeamState && canUseRTM(myTeamState, currentPlayer.id) && canBid(myTeamState, price);
+    if (isSolo) {
+      setTimeout(() => {
+        advanceToNext(newStates, updatedPool);
+      }, canRTM ? 8000 : 2500);
+    }
+  }, [phase, leadingTeam, currentBid, currentPlayer, teamStates, playerPool, isSolo, myTeamState, myTeamId, recordRecent, advanceToNext, code, serverTimeOffset, room, engageLock, releaseLock]);
 
   const handleEndAuction = useCallback(() => {
     clearTimeout(aiTimerRef.current);
